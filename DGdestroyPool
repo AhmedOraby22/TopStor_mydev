@@ -91,11 +91,18 @@ echo iam in >> /root/tmp2
   sleep 3
  done
  sleep 1
+ # test 26 step 717: the member devices of this pool, to clear their labels after the destroy (a destroyed pool's labels stay on
+ # the disks; the product's import scan keeps finding that pool and a later pool create on these free disks failed)
+ pooldevs=`/sbin/zpool list -vHPL $pool 2>/dev/null | awk '{print $1}' | grep '^/dev/'`
  /sbin/zpool destroy -f $pool 2>/root/dgdestroyerror
  if [ $? -ne 0 ]; then
    docker exec etcdclient /TopStor/logmsg.py DGfa5 error $userreq $pool
  else
-   docker exec etcdclient /TopStor/logmsg.py DGsu5 info $userreq $pool 
+   for pd in $pooldevs; do
+     /sbin/zpool labelclear -f $pd >> /root/dglabelclear 2>&1
+     echo "destroyed $pool: labelclear $pd rc $?" >> /root/dglabelclear
+   done
+   docker exec etcdclient /TopStor/logmsg.py DGsu5 info $userreq $pool
 fi
 /pace/etcddel.py $leaderip requests/DGdestroypool/$myhost $myhost/$userreq
 #systemctl restart zfs-zed
