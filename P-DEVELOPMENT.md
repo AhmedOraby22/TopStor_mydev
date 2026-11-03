@@ -3407,3 +3407,16 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   before the container start or no export at all.
 * **Fix:** `pace/closthost.sh`: right before the resume/export the owner is read again (`cpoolowner.sh of`); a pool owned by
   another node than the lost one (the take-over already has it) is logged `already taken over by … -- NOT exported` and left alone.
+
+## 105. iSCSI volume not deletable on a physical node: zvols exported as cluster disks — `QSD5.314` (2026-11-03) `P` `C`
+
+* **Found by:** QC test 26 step 2 (id 712, delete volumes then pools), QSD5.313 on VirtualBox (physical flavour): `volumes/volumedel`
+  ISCSI answered OK, `VolumeDeleteISCSI` logged ISCSI1001 (`zfs destroy -rf` failed), the volume and the pool stayed.
+* **Cause:** pace 330ddd0 made `pace/diskreflooper.sh` call `cdiskref.sh` (container exporter `caddtargetdisks.sh`) on every flavour.
+  Its filter (`lsblk -n` minus `sd*`/sr0/LIO; the `/root/loopdisks` list only in the container flavour) exported every zvol `zdN` as a
+  cluster disk `zdN-<host>` on `<host>:t1`; `addzfsvolumeastarget.sh` (`grep $disk` substring match) then skipped the volume's own
+  backstore, and `VolumeDeleteISCSI` removed only `<disk>-<host>-<vol>`, so the zvol stayed busy.
+* **Fix:** `pace/diskreflooper.sh` picks the exporter by flavour (`is_container`: `cdiskref.sh`, physical: `diskref.sh` = `lsblk -S`,
+  as before 330ddd0); `pace/caddtargetdisks.sh` never exports `zd*`; `pace/addzfsvolumeastarget.sh` checks the exact backstore name and
+  removes a leftover `<disk>-<host>` cluster-disk export of the zvol; `TopStor/VolumeDeleteISCSI` deletes every backstore on the zvol's
+  device before `zfs destroy`. The API stays asynchronous (the failure is reported by the ISCSI1001 notification, as before).
