@@ -1444,7 +1444,7 @@ def userchange(data):
   data['error'] = 'invalid group: '+','.join(bad)
   return jsonify(data), 400
  groupstr = with_everyone(groupstr)
- cmndstring = '/TopStor/UnixChangeUser'+leaderip+' '+data.get('name')+' groups'+groupstr+' '+data['user']+' '+'change'
+ cmndstring = '/TopStor/UnixChangeUser '+leaderip+' '+data.get('name')+' groups'+groupstr+' '+data['user']+' '+'change'
  postchange(cmndstring)
  return data
 
@@ -2288,7 +2288,7 @@ def UnixAddUser(data):
   data['response'] = 'rejected'
   return data
  groupstr = with_everyone(groupstr)
- cmndstring = '/TopStor/UnixAddUser'+leaderip+' '+data.get('name')+' '+pool+' groups'+groupstr+' ' \
+ cmndstring = '/TopStor/UnixAddUser '+leaderip+' '+data.get('name')+' '+pool+' groups'+groupstr+' ' \
      +data.get('Password')+' '+data.get('Volsize')+'G '+data.get('HomeAddress')+' '+data.get('HomeSubnet')+' hoststub'+' '+data['user']
  print('*************************************************************************')
  print(cmndstring)
