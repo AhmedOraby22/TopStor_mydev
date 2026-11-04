@@ -114,6 +114,26 @@ def with_everyone(groupstr):
                 names.append(EVERYONE)
         return ','.join(names)
 
+# The groups of a user as a client sends them: a comma separated list of group ids (the position in getgroups(), what
+# users/grouplist answers as 'id') or of group names.  A value of digits only is an id; anything else must be the exact
+# name of a group.  Returns (groupstr, bad): groupstr is 'NoGroup' or the names joined by ',', bad lists the values that
+# are neither, so the caller refuses them instead of failing on them (test 609 step 2: names gave an HTTP 500).
+def resolve_groups(grps, allgroups):
+        names, bad = [], []
+        for grp in str(grps or '').split(','):
+                grp = grp.strip()
+                if not grp or grp == 'NoGroup':
+                        continue
+                if grp.isdigit() and int(grp) < len(allgroups):
+                        name = allgroups[int(grp)][0]
+                else:
+                        name = next((g[0] for g in allgroups if g[0] == grp), None)
+                if name is None:
+                        bad.append(grp)
+                elif name not in names:
+                        names.append(name)
+        return (','.join(names) if names else 'NoGroup'), bad
+
 # Everyone as the group of a share means all users (every user is a member of it): when it is among the groups the
 # others add nothing, so the share gets Everyone alone.
 def only_everyone(groups):
@@ -1417,15 +1437,14 @@ def userchange(data):
      cmndstring = '/TopStor/TenantChangeUser '+leaderip+' '+data['name']+' groups'+grps+' '+pool+' '+data['tenant']+' '+data['response']
      postchange(cmndstring,data['owner'])
      return data
- allgroups = getgroups()
- if len(grps) < 1:
-  groupstr = 'NoGroup'
- else:
-  for grp in grps.split(','):
-   groupstr += allgroups[int(grp)][0]+','
-  groupstr = groupstr[:-1]
+ groupstr, bad = resolve_groups(grps, getgroups())
+ if bad:
+  # a clear refusal (HTTP 400, so the UI queue counts it as failed) instead of an unhandled exception and HTTP 500
+  data['response'] = 'error'
+  data['error'] = 'invalid group: '+','.join(bad)
+  return jsonify(data), 400
  groupstr = with_everyone(groupstr)
- cmndstring = '/TopStor/UnixChangeUser '+leaderip+' '+data.get('name')+' groups'+groupstr+' '+data['user']+' '+'change'
+ cmndstring = '/TopStor/UnixChangeUser'+leaderip+' '+data.get('name')+' groups'+groupstr+' '+data['user']+' '+'change'
  postchange(cmndstring)
  return data
 
@@ -2263,14 +2282,13 @@ def UnixAddUser(data):
  grps = data.get('groups') or ''
  groupstr = ''
  allgroups = getgroups()
- if len(grps) < 1:
-  groupstr = 'NoGroup'
- else:
-  for grp in grps.split(','):
-   groupstr += allgroups[int(grp)][0]+','
-  groupstr = groupstr[:-1]
+ groupstr, bad = resolve_groups(grps, allgroups)
+ if bad:
+  data['adduser'] = 'rejected: invalid group: '+','.join(bad)
+  data['response'] = 'rejected'
+  return data
  groupstr = with_everyone(groupstr)
- cmndstring = '/TopStor/UnixAddUser '+leaderip+' '+data.get('name')+' '+pool+' groups'+groupstr+' ' \
+ cmndstring = '/TopStor/UnixAddUser'+leaderip+' '+data.get('name')+' '+pool+' groups'+groupstr+' ' \
      +data.get('Password')+' '+data.get('Volsize')+'G '+data.get('HomeAddress')+' '+data.get('HomeSubnet')+' hoststub'+' '+data['user']
  print('*************************************************************************')
  print(cmndstring)
