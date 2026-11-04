@@ -3420,3 +3420,5 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   as before 330ddd0); `pace/caddtargetdisks.sh` never exports `zd*`; `pace/addzfsvolumeastarget.sh` checks the exact backstore name and
   removes a leftover `<disk>-<host>` cluster-disk export of the zvol; `TopStor/VolumeDeleteISCSI` deletes every backstore on the zvol's
   device before `zfs destroy`. The API stays asynchronous (the failure is reported by the ISCSI1001 notification, as before).
+
+* **QSD5.315, test 610 (QX-011) step 2:** `uservalid.py` `PASS_MIN` 4 -> 3 and `topstorweb/src/utils/userRules.js` `USER_PASS_MIN = 3` (user decision 2026-10-29: minimum 3 characters; supersedes the 3 -> 4 change above). `abc` is accepted, `ab` refused ("shorter than 3 characters"); covers fapi.py UnixAddUser, the UnixAddUser script (bulk upload) and Hostconfig.py change-password; matches msgsglobal.txt Unlin1027pw and the Navbar change-password check (>= 3).

@@ -3893,3 +3893,5 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   before the container start or no export at all.
 * **Fix:** `pace/closthost.sh`: right before the resume/export the owner is read again (`cpoolowner.sh of`); a pool owned by
   another node than the lost one (the take-over already has it) is logged `already taken over by … -- NOT exported` and left alone.
+
+* **QSD5.315, test 610 (QX-011) step 2:** `uservalid.py` `PASS_MIN` 4 -> 3 and `topstorweb/src/utils/userRules.js` `USER_PASS_MIN = 3` (user decision 2026-10-29: minimum 3 characters; supersedes the 3 -> 4 change above). `abc` is accepted, `ab` refused ("shorter than 3 characters"); covers fapi.py UnixAddUser, the UnixAddUser script (bulk upload) and Hostconfig.py change-password; matches msgsglobal.txt Unlin1027pw and the Navbar change-password check (>= 3).
