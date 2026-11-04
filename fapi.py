@@ -2387,7 +2387,9 @@ def api_users_userslist(data):
  if 'tenant' not in data:
     data['tenant'] = 'Cluster'
  alldict = dict()
- allusers = []
+ # built in a local list and published at the end: concurrent requests (two admin sessions) used to append to the
+ # same global list, so users/userlist and groups/grouplist answered duplicated users (test 609 step 6)
+ users = []
  if 'Cluster' not in data['tenant']:
     userlst = get('tenant',data['tenant']+'/users')[0][1].split('/')
     grplst = get('tenant',data['tenant']+'/group')[0][1].split('/')[1]
@@ -2403,8 +2405,9 @@ def api_users_userslist(data):
             grp = [0] 
         else:
             grp = 'NoGroup'
-        allusers.append({"name":username, 'id':uid, 'userid':userid, "pool":'na', "size":'na', "groups":grp, 'priv':'na'})
+        users.append({"name":username, 'id':uid, 'userid':userid, "pool":'na', "size":'na', "groups":grp, 'priv':'na'})
         uid += 1
+    allusers = users
     alldict['allusers'] = allusers
     alldict['allgroups'] = [[group,0,grpusrs]]
     alldict['usersnohome'] = [] 
@@ -2431,11 +2434,12 @@ def api_users_userslist(data):
    groups = ['NoGroup']
   else:
    groups = userdict[username]
-  allusers.append({"name":username, 'id':uid, "pool":userpool, "size":usersize, "groups":groups, 'priv':priv})
+  users.append({"name":username, 'id':uid, "pool":userpool, "size":usersize, "groups":groups, 'priv':priv})
   uid += 1
   if 'NoHome' in userpool:
    usersnohome.append({ 'id':nohomeid, 'text': username })
    nohomeid += 1 
+ allusers = users
  alldict['allusers'] = allusers
  alldict['allgroups'] = allgroups
  alldict['usersnohome'] = usersnohome
