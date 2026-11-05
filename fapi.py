@@ -1804,6 +1804,12 @@ def changepass(data):
  if 'baduser' in data['response']:
   return {'response': 'baduser'}
  data['user'] = data['response']
+ # a user changes only his own password; another user's password needs the privilege Box_Users (admin/system always).
+ # Without this gate any logged-in user rewrote usershash/<other user> (test 613 step 6), while UnixChangePass skipped the OS part.
+ if str(data.get('username', '')) != str(data['response']) and not has_privilege('Box_Users', data['response']):
+  logmsg.sendlog('Priv1004','error','system',data['response'])
+  data['error'] = 'noprivilege'
+  return data
  print('#############################')
  print(data)
  print('###########################')

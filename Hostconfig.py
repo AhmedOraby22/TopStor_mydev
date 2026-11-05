@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import socket, subprocess,sys, datetime
+import socket, subprocess,sys, datetime, re
 from uservalid import check_password
 from time import sleep
 from logqueue import queuethis, initqueue
@@ -13,6 +13,19 @@ from sendhost import sendhost
 from UpdateNameSpace import updatenamespace
 import logmsg
 from time import time as stamp
+
+def may_change_pass(leaderip, requester, username):
+ # second check of fapi.py changepass(): own password, or the privilege Box_Users (same rule as privthis.sh / fapi has_privilege)
+ requester = str(requester)
+ if requester and requester == str(username):
+  return True
+ if requester in ('admin', 'system'):
+  return True
+ try:
+  info = str(get(leaderip, 'usersinfo/'+requester)[0])
+  return re.search(r'(^|/)Box_Users-true(/|$)', info) is not None
+ except Exception:
+  return False
 
 def config(leader, leaderip, myhost, *bargs):
  arglist = bargs[0]
@@ -75,7 +88,9 @@ def config(leader, leaderip, myhost, *bargs):
 
 ############ changing user password ###############
  if 'password' in arglist:
-  if check_password(arglist['password']):      # empty, shorter than 3, blanks, quotes ... (uservalid.py)
+  if not may_change_pass(leaderip, arglist.get('user', ''), arglist.get('username', '')):
+   logmsg.sendlog('Priv1004','error','system',str(arglist.get('user', '')))   # another user's password without Box_Users
+  elif check_password(arglist['password']):      # empty, shorter than 3, blanks, quotes ... (uservalid.py)
    logmsg.sendlog('Unlinfa12','error',arglist['user'],arglist['username'])
   else:
    print('changing password')

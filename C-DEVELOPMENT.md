@@ -3913,3 +3913,12 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   nested `UnixChangeUser` still runs before the script ends (group membership and the `usersigroup` read-modify-write stay serialized
   in the consumer, so add -> delete -> add of one name keeps its order). Expected: ~4-5 s per add on the VM flavour instead of ~18 s,
   a user listed ~3 s after its command starts.
+
+* **QSD5.316, test 613 (QX-014) step 6:** an unprivileged user (qu2, own token) called `user/changepass username=qu1` and it was
+  accepted: `Hostconfig.py` wrote `usershash/qu1` (API/UI login of qu1 took the new password) and the `sync/passwd` request, while
+  `UnixChangePass` skipped `usermod` (`privthis.sh Box_Users` false for qu2), so etcd and the OS/SMB password disagreed. Fix:
+  `fapi.py` `changepass()` allows the change only when `username` is the requester (own password: Navbar "Change Password") or the
+  requester has `Box_Users` (`has_privilege`; admin/system always: Users page "change password"); otherwise it logs `Priv1004`
+  (requester) and returns `error: noprivilege` without calling `config()`. Same rule repeated in `Hostconfig.py` (`may_change_pass`,
+  reads `usersinfo/<requester>` from the leader) before `usershash/` and the sync request are written. Unchanged: the password rule
+  (`check_password`, `Unlinfa12`), `Unlin1012`, the etcd keys and the node sync path.
