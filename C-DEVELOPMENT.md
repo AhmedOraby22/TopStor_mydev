@@ -3922,3 +3922,26 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   (requester) and returns `error: noprivilege` without calling `config()`. Same rule repeated in `Hostconfig.py` (`may_change_pass`,
   reads `usersinfo/<requester>` from the leader) before `usershash/` and the sync request are written. Unchanged: the password rule
   (`check_password`, `Unlinfa12`), `Unlin1012`, the etcd keys and the node sync path.
+
+* **QSD5.316, test 614 (QX-015) step 1:** group `q015ag` created with users `q015a,q015a1,q015a10,q015ab,xq015a` lost `q015a` in
+  etcd (`usersigroup/q015ag` = `,q015a1,q015a10,q015ab,xq015a`, follower OS group without it, leader OS group with it). `UnixChangeUser`
+  found "the groups the user is in" with `/pace/etcdget.py $etcd usersigroup $username`, whose filter matches any text of the whole
+  key/value pair: `q015a` matched the key `usersigroup/q015ag` and the members `q015a1`, `xq015a`, so q015ag counted as a group q015a
+  was already in and the append was skipped. Member lists were also edited with substring `sed "s/$username//g"` (removing `q015a`
+  from `q015a,q015a1` left `1`; UnixChangeGroup cut `q015ag` out of `q015ag2`). Fix: member lists (field 3 of `usersigroup/<group>`)
+  are read and edited by EXACT comma separated names everywhere in these flows. `UnixChangeUser`, `UnixDelUser`: `groupsof` reads
+  `usersigroup --prefix` and keeps the groups whose list holds the name exactly; `mlist_del` / `mlist_add` (awk, split on `,`, drop
+  empty/NoUser/no elements, `NoUser` when empty, no leading comma) replace the seds; the own-group / NoGroup / stable-group / NoUser
+  tests are string equality. `UnixChangeGroup`: membership by `mlist_has`, removal by `mlist_del`, the user's other groups from
+  `id -Gn` without its own group and this group by exact name. `UnixDelUser` / `UnixDelGroup`: "still in /etc/passwd" by exact first
+  field; `UnixDelUser` deletes `usersinfo/<name>` by exact key (was `users /<name>/`); the Everyone/admin/NoUser guard is exact.
+  `UnixAddGroup`: the name-taken check (Unlin1021uu) looks for the exact keys `usersinfo/`, `usershash/`, `usersigroup/<name>` (was
+  `grep -w` over every user* value), the new uid/gid from `^<name>:` in /etc/passwd. pace `usersyncall.py` / `groupsyncall.py`
+  (follower sync): the `Add` path takes the exact `usersinfo/<name>` / `usersigroup/<name>` key (was the first pair containing the
+  text, e.g. `usersigroup/Everyone` for a user name); the `Del` path re-reads the leader's list and compares exact keys (was
+  `name in str(list)` of the last full sync), and the user delete removes `usersinfo/<name>` and `usershash/<name>` from the local
+  etcd (was `dels(syncip,'user',name)`: every user*/group key whose text contains the name, e.g. usersinfo/q015a1, usersigroup/q015ag).
+  topstorweb `accounts.php` (old Users page): selected groups/users by exact member name. Unchanged: etcd keys and value format
+  (readers split on `,`: fapi `getgroups`/grouplist/userlist, groupsyncall), message codes, the sync requests and the general
+  `etcdget.py`/`etcddel.py` filter semantics. Existing lists with a leading comma or `no` are read correctly and normalized on the
+  next edit.

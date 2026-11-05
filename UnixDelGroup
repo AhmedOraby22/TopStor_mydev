@@ -37,7 +37,8 @@ then
 userdel -f  $username 
 rm  key/${username}fixed
 sleep 2
-cat /etc/passwd |  grep $username
+# exact name: "grep $username" also found q015ag1 / xq015ag and reported a failed delete (Unlin1g1001) for a deleted group
+cut -d: -f1 /etc/passwd | grep -qxF -- "$username"
 if [ $? -eq 0 ]; then
 	echo s$pullsync | grep pull
 	if [ $? -ne 0 ];

@@ -47,7 +47,9 @@ echo 2222222222222222222222222222222222222222222222
   				docker exec etcdclient /TopStor/logmsg.py Unlin1021gv warning $userreq $username
   				exit
  			fi
-                        /TopStor/etcdget.py $etcd user --prefix | grep -w $username 
+                        # the name is taken when a user, a password or a group has EXACTLY this name (grep -w matched any
+                        # word of any user/group value: member names, pool names, "no", "NoHome")
+                        /TopStor/etcdget.py $etcd user --prefix | grep -F -e "('usersinfo/$username'," -e "('usershash/$username'," -e "('usersigroup/$username',"
                         if [ $? -eq 0 ];
                         then
                                 docker exec etcdclient /TopStor/logmsg.py Unlin1021uu warning $userreq $username
@@ -76,7 +78,7 @@ echo 2222222222222222222222222222222222222222222222
 
 # /bin/smbpasswd -e $username
  sleep 2;
- userline=`cat /etc/passwd | grep $username`
+ userline=`grep "^$username:" /etc/passwd`
  if [ $? -ne  0  ]; then
    docker exec etcdclient /TopStor/logmsg.py Unlin1120 error $userreq $username
  else 

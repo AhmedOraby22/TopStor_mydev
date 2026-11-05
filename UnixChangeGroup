@@ -21,6 +21,10 @@ then
  groupusers='NoUser'
 fi
 stableuser="na"
+# Member lists (field 3 of usersigroup/<group>: "a,b,c" or NoUser) are read and edited by EXACT comma separated names
+# (a name never matches a part of another name: q015a / q015a1 / q015a10 / xq015a, test 614); same helpers as UnixChangeUser.
+mlist_has() { echo ",$1," | grep -qF ",$2,"; }
+mlist_del() { echo "$1" | awk -F, -v n="$2" '{o=""; for(i=1;i<=NF;i++) if($i!="" && $i!="NoUser" && $i!="no" && $i!=n) o=o (o==""?"":",") $i; print (o==""?"NoUser":o)}'; }
 privilege="Box_Users";
 contrun=`./privthis.sh $privilege $userreq`;
 if [[ $contrun == 'true' ]]
@@ -48,8 +52,7 @@ then
  then
  	docker exec etcdclient /TopStor/logmsg.py Unst1025 info $userreq $groupname
  fi
- echo $groupusers | grep NoUser
- if [ $? -ne 0 ];
+ if [ "$groupusers" != 'NoUser' ];
  then
 #### getting users need to removed
   echo ------------------------- $groupusers ---------------
@@ -66,15 +69,14 @@ then
    oldusers=`echo $oldusers | sed 's/ /,/g' | cut -d, -f2-`
    oldusers=$oldusers','
    oldusersel=`echo ${oldusers} | sed 's/,/ /g' | wc -w`
-   if [ $lsn -le 2 ];
+   if [ $lsn -le 2 ] || [ "$l" = 'NoUser' ] || [ "$l" = 'no' ];
    then
     continue
    fi
-   echo $groupusers | grep -w $l
-   if [ $? -ne 0 ];
+   if ! mlist_has "$groupusers" "$l";
    then
     gpasswd -d $l $groupname
-    originalusers=`echo $originalusers| sed "s/$l//g" | sed 's/^,//g' | sed 's/,,/,/g' | sed 's/,$//g'` 
+    originalusers=`mlist_del "$originalusers" "$l"`
    else
     stableuser=$stableuser' '$l
    fi 
@@ -82,8 +84,7 @@ then
   echo originalusers=$originalusers
   sleep 3
   echo 2------------ $oldusersel ---------- $originalusers --- $oldusers--------  $memoryallusers
-  echo origusers$originalusers | grep origusers$memoryallusers 
-  if [ $? -ne 0 ];
+  if [ "$originalusers" != "$memoryallusers" ];
   then
    cusersleft=`echo $originalgroup | cut -d/ -f1-2`
    cusersright=`echo $originalgroup | cut -d/ -f4-`
@@ -99,12 +100,12 @@ then
    usersall=`echo $usersall | sed 's/ /,/g' | cut -d, -f2-`
    usersall=$usersall','
    usersl=`echo ${usersall} | sed 's/,/ /g' | wc -w`
-   echo $stableuser | grep  -w $l
-   if [ $? -eq 0 ];
+   if [ -z "$l" ] || echo " $stableuser " | grep -qF " $l ";
    then
     continue
    fi
-   usergroups=`id -Gn $l | sed 's/ /,/g' | sed "s/$l,//g" | sed "s/$groupname//g" |  sed "s/,,/,/g" | sed 's/,,,/,/g' | sed 's/,,,,/,/g' | sed 's/^,//g' | sed 's/,$//g' `
+   # the user's groups now, without its own group and this group, by exact name (sed "s/$groupname//" cut q015ag out of q015ag2)
+   usergroups=`id -Gn $l | tr ' ' '\n' | grep -vxF -e "$l" -e "$groupname" | paste -sd, -`
    usergroupsn=`echo $usergroups | wc -c`
    if [ $usergroupsn -le 2 ];
    then
