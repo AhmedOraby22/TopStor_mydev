@@ -61,6 +61,31 @@ notify() {
 	echo $! > "$notifyfile"
 }
 [ -z "$TS_NOTIFYPIDFILE" ] && trap 'rm -f "$notifyfile"' EXIT
+# "<host> <ip>" of the node that has pool $1 imported (the zpool lists every node puts in hosts/<node>/current, the address
+# from ready/<node> as fapi postchange takes it); nothing when no ready node has it
+poolowner() {
+/usr/bin/python3 - "$leaderip" "$1" "$myhost" <<'EOF' 2>/dev/null
+import sys, json
+sys.path.insert(0, '/TopStor')
+from etcdgetpy import etcdget as get
+leaderip, pool, me = sys.argv[1], sys.argv[2], sys.argv[3]
+for key, val in get(leaderip, 'hosts', '--prefix'):
+    parts = key.split('/')
+    if len(parts) != 3 or parts[2] != 'current' or parts[1] == me:
+        continue
+    try:
+        pools = json.loads(val)
+    except Exception:
+        continue
+    if not any(isinstance(p, dict) and p.get('name') == pool for p in pools):
+        continue
+    ip = ''.join(v for k, v in get(leaderip, 'ready/'+parts[1], '--prefix') if k == 'ready/'+parts[1])
+    if ip.count('.') == 3:
+        print(parts[1], ip)
+        break
+EOF
+}
+homeowner=''
 privilege="Box_Users";
 contrun=`./privthis.sh $privilege $userreq`;
 echo contrun $contrun, $userreq
@@ -148,10 +173,39 @@ then
  	if [ $? -ne 0 ];
  	then
 		docker exec etcdclient docker exec etcdclient /TopStor/logmsg.py Unlin1024 info  $userreq $username $homedir
-  		echo hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
-  		echo /TopStor/VolumeCreateHOME $leaderip $homePool $username $size $username $HomeAddr $HomeSubnet active $userreq $myhost $userreq 
-  		/TopStor/VolumeCreateHOME $leaderip $homePool $username $size $username $HomeAddr $HomeSubnet active $userreq $myhost $userreq 
-  		echo hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
+		# The home (dataset, address, share container) is made on the node that has the pool imported (test 615 step 2: the pool
+		# was on node2, VolumeCreateHOME ran here on the leader, zfs create failed with NFS1006 and no node made the home, while
+		# the user was still recorded with it). Pool here: as before, now. Pool on another node: VolumeCreateHOME is sent to
+		# that node (as fapi volumecreate does) at the end of this script, after usersinfo and the user sync request exist.
+		/sbin/zpool list -H -o name "$homePool" >/dev/null 2>&1
+		if [ $? -eq 0 ]
+		then
+  			echo hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
+  			echo /TopStor/VolumeCreateHOME $leaderip $homePool $username $size $username $HomeAddr $HomeSubnet active $userreq $myhost $userreq
+  			/TopStor/VolumeCreateHOME $leaderip $homePool $username $size $username $HomeAddr $HomeSubnet active $userreq $myhost $userreq
+			homerc=$?
+  			echo hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
+		else
+			homeowner=`poolowner "$homePool"`
+			echo home pool $homePool is on: $homeowner
+			if [ -z "$homeowner" ]
+			then
+				docker exec etcdclient /TopStor/logmsg.py NFS1006 error $userreq $homePool/$username
+				homerc=1
+			else
+				homerc=0
+			fi
+		fi
+		if [ $homerc -ne 0 ]
+		then
+			# no home could be made: the user is kept as a user WITHOUT a home (usersinfo NoHome, passwd /NoHome/<user>),
+			# NFS1006 (above / in VolumeCreateHOME) says why and Unlin1023 that the user has no home directory
+			echo home of $username not created, the user gets no home
+			homeowner=''
+			homePool='NoHome'
+			usermod -d /NoHome/$username $username
+			notify /TopStor/logmsg.py Unlin1023 warning $userreq $username
+		fi
 	fi
  fi
 
@@ -190,6 +244,7 @@ then
   userhome=`echo $userline | awk -F':' '{print $6}'`
   #userhash=`echo $userline | awk -F':' '{print $5}' | awk -F'TopStor' '{print $2}'`
   userhash=$pas
+  usercreated='yes'
   
   /TopStor/etcdput.py $etcd 'usersinfo/'$username $userid':'$usergd':/'$homePool'/'$username'/'$size'/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no'
   /TopStor/etcdput.py $etcd 'usershash/'$username $userhash
@@ -219,6 +274,25 @@ then
 	# the UsrChange request of this user (its groups) is filed by the UnixChangeUser call above, with the arguments of UnixChangeUser;
 	# the copy that used to be filed here carried the arguments of UnixAddUser ($@), so followers ran UnixChangeUser with
 	# 'NoHome' as the groups and 'groups...' as the requester
+ fi
+ # the home on another node (see VolumeCreateHOME above): sent to the pool owner's command queue, as fapi postchange does;
+ # 'newuserhome' tells VolumeCreateHOME that usersinfo already names this pool for the new user (not "already has a home")
+ # and to wait there for the user's sync copy. It reports NFS1006/NFS1007 itself and sets usersinfo to NoHome if it fails.
+ if [ -n "$homeowner" -a "$usercreated" = 'yes' ]
+ then
+	ownerhost=`echo $homeowner | awk '{print $1}'`
+	ownerip=`echo $homeowner | awk '{print $2}'`
+	homemsg="{'req': 'Pumpthis', 'reply': ['/TopStor/VolumeCreateHOME', '$leaderip', '$homePool', '$username', '$size', '$username', '$HomeAddr', '$HomeSubnet', 'active', '$userreq', '$ownerhost', '$userreq', 'newuserhome']}"
+	echo sending to $ownerhost $ownerip: $homemsg
+	/TopStor/sendhost.py $ownerip "$homemsg" recvreply $myhost
+	if [ $? -ne 0 ]
+	then
+		echo home of $username could not be sent to $ownerhost, the user gets no home
+		docker exec etcdclient /TopStor/logmsg.py NFS1006 error $userreq $homePool/$username
+		/TopStor/etcdput.py $etcd 'usersinfo/'$username "`/pace/etcdget.py $etcd usersinfo/$username | sed "s|:/$homePool/|:/NoHome/|"`"
+		usermod -d /NoHome/$username $username
+		notify /TopStor/logmsg.py Unlin1023 warning $userreq $username
+	fi
  fi
  echo hi3
  notify /TopStor/logqueue.py `basename "$0"` finish $userreq 

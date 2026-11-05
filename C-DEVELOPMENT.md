@@ -3945,3 +3945,22 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   (readers split on `,`: fapi `getgroups`/grouplist/userlist, groupsyncall), message codes, the sync requests and the general
   `etcdget.py`/`etcddel.py` filter semantics. Existing lists with a leading comma or `no` are read correctly and normalized on the
   next edit.
+
+* **QSD5.316, test 615 (QX-016) step 2:** a user created with a home on pool P1 got no home when P1 was imported on node2 (the
+  product's own choice of owner): fapi `UnixAddUser` posts the command to the leader, `UnixAddUser` ran `VolumeCreateHOME` there,
+  `zfs create P1/<user>_<id>` failed (NFS1006), the sync copies skip the home on purpose, and the user was still recorded with
+  the home pool (usersinfo, `usermod -d` to the missing dataset) and announced with Unlin1022: no dataset, no HOMEE volume, no
+  address. NFS/CIFS create, pool changes and user delete (`VolumeDeleteHOME` to `vol['host']`) already go to the pool owner. Fix:
+  `UnixAddUser` (new user, home pool given): pool imported here -> `VolumeCreateHOME` here as before; otherwise the owner is
+  looked up (`poolowner`: the node whose `hosts/<node>/current` lists the pool, address from `ready/<node>` as fapi `postchange`
+  does) and, after usersinfo and the user sync request are written, `VolumeCreateHOME ... newuserhome` is sent to that node's
+  command queue with `sendhost.py` (Pumpthis, same arguments as the local call). `VolumeCreateHOME`: checks the pool is imported
+  on this node before anything (NFS1006 otherwise); with `newuserhome` the Unlin1028 guard accepts a usersinfo that already names
+  this pool, it waits up to 60 s for the user's sync copy and otherwise chowns with the uid/gid of usersinfo; the home directory
+  (`usermod -d`) is set only after the dataset exists; it exits 1 when no home was made (no privilege, Unlin1028, Unlin1021vv,
+  NFS1006) and 0 on success. A home that cannot be made never leaves a user pointing at it: the user is KEPT as a user without a
+  home (usersinfo `/NoHome/`, passwd `/NoHome/<user>`), NFS1006 says why and Unlin1023 ("will not have a home directory") that it
+  has none; Unlin1022 still reports the user itself. Done by `UnixAddUser` for the local call, for an owner that cannot be found
+  and for a failed send, and by `VolumeCreateHOME newuserhome` on the owner. Unchanged: fapi, etcd keys/values, log codes, the
+  home of a pool on the leader, the follower sync copy (pullsync skips the home), the delete path, `UsersMassAddition.py` (same
+  script, same routing).
