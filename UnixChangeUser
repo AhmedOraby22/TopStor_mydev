@@ -19,14 +19,37 @@ fi
 ischange=`echo $@  | awk '{print $5}'`;
 pullsync=`echo $@  | awk '{print $6}'`;
 stablegrp=""
+# Notifications (logmsg.py/logqueue.py) cost 1.2-2.4 s each (python, pika, a new RabbitMQ connection) and nothing here reads
+# their result, so they run in the background, while this script runs in the single command consumer (topstorrecvreply.py).
+# Each one waits (at most 10 s) for the one sent before it, so they still arrive in the order they are sent; a nested
+# UnixChangeUser joins the same chain through TS_NOTIFYPIDFILE. No output may reach the consumer's pipe (it waits for EOF).
+notifyfile=${TS_NOTIFYPIDFILE:-/tmp/topstornotify.$$}
+notify() {
+	local prev=''
+	[ -s "$notifyfile" ] && read -r prev < "$notifyfile"
+	( n=0; while [ -n "$prev" ] && [ $n -lt 100 ] && kill -0 "$prev" 2>/dev/null; do sleep 0.1; n=$((n+1)); done
+	  docker exec etcdclient "$@" ) </dev/null >/dev/null 2>&1 &
+	echo $! > "$notifyfile"
+}
+[ -z "$TS_NOTIFYPIDFILE" ] && trap 'rm -f "$notifyfile"' EXIT
 privilege="Box_Users";
 contrun=`./privthis.sh $privilege $userreq`;
 if [[ $contrun == 'true' ]];
 then
-	docker exec etcdclient /TopStor/logqueue.py `basename "$0"` running $userreq 
-	myhost=`docker exec etcdclient /TopStor/etcdgetlocal.py clusternode`
-	myhostip=`docker exec etcdclient /TopStor/etcdgetlocal.py clusternodeip`
-	leader=`docker exec etcdclient /TopStor/etcdgetlocal.py leader`
+	notify /TopStor/logqueue.py `basename "$0"` running $userreq 
+	# UnixAddUser hands its values over (TS_*); otherwise clusternode, clusternodeip and leader in ONE docker exec (was three)
+	myhost=$TS_MYHOST; myhostip=$TS_MYHOSTIP; leader=$TS_LEADER
+	if [ -z "$myhost" -o -z "$myhostip" -o -z "$leader" ]
+	then
+		hostinfo=`docker exec -w /TopStor etcdclient /usr/bin/python3 -c 'from etcdgetlocal import etcdget; [etcdget(k) for k in ("clusternode","clusternodeip","leader")]'`
+		{ read -r myhost; read -r myhostip; read -r leader; } <<< "$hostinfo"
+	fi
+	if [ -z "$myhost" -o -z "$myhostip" -o -z "$leader" ]
+	then
+		myhost=`docker exec etcdclient /TopStor/etcdgetlocal.py clusternode`
+		myhostip=`docker exec etcdclient /TopStor/etcdgetlocal.py clusternodeip`
+		leader=`docker exec etcdclient /TopStor/etcdgetlocal.py leader`
+	fi
 	echo $leader | grep $myhost
 	if [ $? -eq 0 ];
 	then
@@ -38,7 +61,7 @@ then
  id $username
  if [ $? -ne 0 ];
  then
-	docker exec etcdclient /TopStor/logqueue.py `basename "$0"` finish $userreq 
+	notify /TopStor/logqueue.py `basename "$0"` finish $userreq 
 	exit 
  fi
  echo 'NoUser' | grep $username
@@ -47,7 +70,7 @@ then
  	echo s$pullsync | grep pull 
  	if [ $? -ne 0 ];
  	then
-  		docker exec etcdclient /TopStor/logmsg.py Unst1024 info $userreq $username
+  		notify /TopStor/logmsg.py Unst1024 info $userreq $username
 	fi
  fi
  echo $username | grep NoUser
@@ -171,7 +194,7 @@ then
 	echo s$pullsync | grep pull 
  	if [ $? -ne 0 ];
  	then
-  		docker exec etcdclient /TopStor/logmsg.py Unsu1024 info $userreq $username
+  		notify /TopStor/logmsg.py Unsu1024 info $userreq $username
 	fi
  fi
  echo dddddddddddddddddddddddddd $leader, $myhost
@@ -187,5 +210,5 @@ then
 	/TopStor/etcdput.py $etcd sync/UsrChange/$params/request/$myhost UsrChange_$stamp
 	/TopStor/etcdput.py $etcd sync/UsrChange/$params/request UsrChange_$stamp
  fi
- docker exec etcdclient /TopStor/logqueue.py `basename "$0"` finish $userreq 
+ notify /TopStor/logqueue.py `basename "$0"` finish $userreq 
 fi

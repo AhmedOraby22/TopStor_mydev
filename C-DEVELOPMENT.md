@@ -3895,3 +3895,21 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   another node than the lost one (the take-over already has it) is logged `already taken over by … -- NOT exported` and left alone.
 
 * **QSD5.315, test 610 (QX-011) step 2:** `uservalid.py` `PASS_MIN` 4 -> 3 and `topstorweb/src/utils/userRules.js` `USER_PASS_MIN = 3` (user decision 2026-10-29: minimum 3 characters; supersedes the 3 -> 4 change above). `abc` is accepted, `ab` refused ("shorter than 3 characters"); covers fapi.py UnixAddUser, the UnixAddUser script (bulk upload) and Hostconfig.py change-password; matches msgsglobal.txt Unlin1027pw and the Navbar change-password check (>= 3).
+
+* **QSD5.316, test 612 (QX-013) step 1:** 5 users without a home created back to back must be listed within 20 s; the 5th was listed
+  after ~62-79 s. The single command consumer (`topstorrecvreply.py`, `actionreply.py` Pumpthis = `subprocess.run`) runs one
+  `UnixAddUser` at a time and each took ~18 s (29.6 s traced) on the VM flavour: 76 % of it were 16 sequential
+  `docker exec etcdclient python ...` calls (0.3-2.4 s each): clusternode/clusternodeip/leader read 3 times in `UnixAddUser` and 3
+  more times in the nested `UnixChangeUser`, and 9 `logmsg.py`/`logqueue.py` notifications (python + pika + a new RabbitMQ
+  connection each) whose result nothing reads. Fix (`UnixAddUser`, `UnixChangeUser`): (1) the three host values in ONE
+  `docker exec -w /TopStor etcdclient python3 -c 'from etcdgetlocal import etcdget ...'` (same function, same output; the old three
+  calls stay as a fallback when it returns nothing); `UnixAddUser` hands them to the nested `UnixChangeUser` as `TS_MYHOST`,
+  `TS_MYHOSTIP`, `TS_LEADER`; (2) the success-path notifications go through `notify`, which runs the same `docker exec etcdclient
+  /TopStor/logmsg.py|logqueue.py ...` in the background with stdin/stdout/stderr on /dev/null (the consumer reads the script's stdout
+  until EOF) and lets each one wait (max 10 s, `kill -0` on the previous pid kept in `/tmp/topstornotify.<pid>`, shared with the nested
+  call via `TS_NOTIFYPIDFILE`) for the one before, so the messages keep their order. Unchanged: every etcd key and its order
+  (`usersinfo/`, `usershash/`, `usersigroup/`, `sync/UsrChange`, `sync/user`), every message code, the guards (`uservalid.py`, the
+  system-account check, `privthis.sh`), the rejection/early-exit paths (still synchronous), the home path (`VolumeCreateHOME`), the
+  nested `UnixChangeUser` still runs before the script ends (group membership and the `usersigroup` read-modify-write stay serialized
+  in the consumer, so add -> delete -> add of one name keeps its order). Expected: ~4-5 s per add on the VM flavour instead of ~18 s,
+  a user listed ~3 s after its command starts.
