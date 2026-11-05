@@ -577,8 +577,9 @@ def uploadUsers(data):
       filePath = os.path.join(dirPath, filename)
       uploaded_file.save(filePath)
       cmdline = 'python /TopStor/UsersMassAddition.py '+ leaderip +' '+ data['user'] + ' ' + myhost + ' ' + filePath + ' '+ data['token']
-      postchange(cmdline)
+      # "adding users started" before the job is queued, so it is always logged ahead of the rows and Unlin1027
       logmsg.sendlog('Unlin1025', 'info', data["user"])
+      postchange(cmdline)
       return {"data":data}
     else:
       logmsg.sendlog('Unlin1026', 'error', data["user"])

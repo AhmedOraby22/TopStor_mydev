@@ -3964,3 +3964,18 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   and for a failed send, and by `VolumeCreateHOME newuserhome` on the owner. Unchanged: fapi, etcd keys/values, log codes, the
   home of a pool on the leader, the follower sync copy (pullsync skips the home), the delete path, `UsersMassAddition.py` (same
   script, same routing).
+
+* **QSD5.316, test 616 (QX-017) step 2:** a bulk user upload (`users/uploadUsers`) processed every row but "Unlin1025 File
+  uploaded successfully! Adding users started" and "Unlin1027 Finished adding users" never reached the log: both are sent
+  without arguments (`sendlog(code, type, user)`), `logmsg2.sh` builds `<code>@@` plus `@<arg>` per argument and, since
+  6a72ae90, refuses every line without `@@@` with a LogError, so EVERY zero-argument message was dropped (also Unlin1005/1006/
+  1105/1106, Actst/Actsu1000/1001 of actionreply.py, HostManual1002/1st12/2st12/1su12/2su12 of Hostconfig.py and
+  LocalManualConfig.py, Unlin1026, pace Zpst03/Zpsu03). Fix: `logmsg2.sh` writes a message without arguments as `<code>@@`
+  (the format before 6a72ae90, read by getlogs.py) when `msgsglobal.txt` has the code with no `:` placeholder; a code that
+  needs arguments and got none, or an unknown code without arguments, is still refused with LogError; messages with
+  arguments are unchanged. `getlogs.py` skips a line whose code is not in the catalog (the LogError lines themselves:
+  "error system admin LogError" shifts the fields, `logdict['admin']` raised KeyError and failed the whole `info/logs`).
+  fapi `uploadUsers` sends Unlin1025 before queueing `UsersMassAddition.py`, so it always precedes the row messages and
+  Unlin1027. topstorweb: the Users page "Import Template" button opens a file picker and POSTs the file as multipart `file`
+  to `users/uploadUsers` (it had no handler); `dist/Template.xlsx` (deleted in f02a647f, Download Template was 404) is
+  restored with the columns UsersMassAddition.py reads: name, Password, Volpool, Volsize, HomeAddress, HomeSubnet, groups.

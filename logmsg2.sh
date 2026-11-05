@@ -1,5 +1,6 @@
 #!/bin/sh
 glog='/TopStordata/TopStorglobal.log'
+catalog='/TopStor/msgsglobal.txt'
 dtn=`date +%s`
 
 raw_args="$@"
@@ -34,8 +35,23 @@ while [ $x -le $# ]; do
     x=$((x+1))
 done
 
-if ! echo "$code" | grep -q "@@@"; then
+if [ $# -eq 6 ]; then
+    # A message without arguments is written as "<code>@@" (the format before the @@@ check; getlogs.py reads it).
+    # It is accepted only for a catalog code that has no ':' placeholder, so a call that forgot its arguments
+    # (or an unknown code, which info/logs cannot show) is still refused.
+    if [ -r "$catalog" ]; then
+        nph=`awk -v c="$msg" 'index($0, c":") == 1 { n = 0; for (i = 5; i <= NF; i++) if ($i == ":") n++; print n; exit }' "$catalog"`
+        if [ -z "$nph" ]; then
+            error_detail="unknown message code $msg without arguments"
+        elif [ "$nph" -gt 0 ]; then
+            error_detail="incorrect format: $msg needs $nph arguments, received none"
+        fi
+    fi
+elif ! echo "$code" | grep -q "@@@"; then
     error_detail="incorrect format: missing @@@ separator in $msg"
+fi
+
+if [ -n "$error_detail" ]; then
     echo "$dt $tm $fromhost error system admin LogError@@@error while logging message: $error_detail $dtn" >> $glog
     exit 1
 fi

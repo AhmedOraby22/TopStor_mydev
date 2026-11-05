@@ -57,7 +57,11 @@ def getlogs(lines=100, *args):
    if len(notifbody) < 6:
     continue
    notifbody[3],notifbody[4],notifbody[5] = notifbody[5],notifbody[3],notifbody[4]
-   notiflist.append(notifthis(notifbody=notifbody))
+   try:
+    notiflist.append(notifthis(notifbody=notifbody))
+   except KeyError:
+    # a line whose code is not in msgsglobal.txt (e.g. the LogError lines of logmsg2.sh) must not fail info/logs
+    continue
  return notiflist  
 
  
