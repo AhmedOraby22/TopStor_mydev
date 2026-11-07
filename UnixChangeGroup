@@ -82,7 +82,8 @@ then
    fi 
   done 
   echo originalusers=$originalusers
-  sleep 3
+  # a follower's copy does not wait (it made the members of a new group appear there after more than 60 s, test 620)
+  [ "$etcd" = "$leaderip" ] && sleep 3
   echo 2------------ $oldusersel ---------- $originalusers --- $oldusers--------  $memoryallusers
   if [ "$originalusers" != "$memoryallusers" ];
   then
@@ -105,6 +106,8 @@ then
     continue
    fi
    # the user's groups now, without its own group and this group, by exact name (sed "s/$groupname//" cut q015ag out of q015ag2)
+   # (on a follower UnixChangeUser applies the user's groups of the leader's etcd instead of this list: this node's own groups
+   # may be behind or emptied by a request that came first, test 620)
    usergroups=`id -Gn $l | tr ' ' '\n' | grep -vxF -e "$l" -e "$groupname" | paste -sd, -`
    usergroupsn=`echo $usergroups | wc -c`
    if [ $usergroupsn -le 2 ];

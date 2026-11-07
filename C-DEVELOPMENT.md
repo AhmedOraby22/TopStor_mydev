@@ -4004,3 +4004,24 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   `checksyncs` keeps the user sync request (flag 0) for the next pass. Side fix: fapi `postchange` no longer appends every
   queued command (plaintext passwords included) to /TopStordata/tempdata (mode 644, read by nothing). Unchanged: etcd keys and
   values, log codes, guards, the queue and its message format, the home of a pool on the leader, the delete path.
+* **QSD5.318, test 620 (QX-021) step 1:** group q021g1 (q021u1) then q021g2 (q021u1,q021u2): on node2 (follower) q021u1 lost
+  q021g1 for good (`q021g1:x:1003:`, local usersigroup/q021g1 NoUser) while isinsync said yes, and node2's
+  usersigroup/Everyone was `_1/q020u01/_1,q021u1,q021u2/`. Not a regression (same path in QSD5.315). Causes: the leader files
+  `sync/UsrChange` (inside UnixAddGroup -> UnixChangeGroup -> UnixChangeUser) before the group's own `sync/group` request, so a
+  follower can run the user change first; `UnixChangeUser` did `usermod -G ''` then `usermod -G Everyone,q021g1,q021g2`, which
+  usermod refuses as a whole while q021g2 is missing, leaving the user in no group; the later group add rebuilt the user's list
+  from the node's own (emptied) `id -Gn` (UnixChangeGroup) and UnixChangeUser then removed the user from the local q021g1 row.
+  usersigroup/Everyone exists only on the primary (docker_setup), the group sync skips it, and UnixChangeUser edited the `_1`
+  that etcdget.py returns for a missing key. Fix: `UnixChangeUser` never clears first and sets, in one `usermod -G`, only the
+  groups that exist on the node (own group kept; missing ones reported); on a follower the list is the leader's etcd now (the
+  usersigroup rows that list the user by exact name, plus Everyone), not the request's list nor local `id -Gn` (falls back to the
+  request's list when the leader's rows cannot be read), and the follower's member rows become exact copies of the leader's rows
+  (repairs a garbled local Everyone) instead of local edits; no usersigroup row is written when its read returned `_1`/nothing
+  (leader and fallback path, NoUser path); a follower that misses a group of the leader exits 3 after applying the rest and pace
+  `checksyncs` keeps that UsrChange (flag 0) and tries it again on each pass for up to 300 s after it was filed (then marked done;
+  the group's own sync applies the membership anyway). The follower's sync-copy detection also looks at $7 (copies of
+  UnixChangeGroup's changes carry `<requester> pullsync`), so retries send no Unst1024/Unsu1024. pace `groupsyncall` copies the
+  leader's usersigroup/Everyone row to a follower (full sync and after every single group add; not on a replication receiver),
+  never a `_1` value. `UnixChangeGroup` skips its `sleep 3` on a follower (members of a new group reached node2 after 68-84 s).
+  Unchanged: etcd keys and value format, log codes, the Everyone guards (never changed, refusals), exact-name member semantics,
+  the leader's request order and stamps.
