@@ -31,7 +31,7 @@ zdedup=`echo "$@" | grep -o 'dedup=[a-z]*' | head -1 | cut -d= -f2`
 [ "$zdedup" = "off" ] || zdedup=on
 DG=$pDG;
 # 'newuserhome': sent by UnixAddUser (leader) to this node, the pool owner, for a user it has just created: usersinfo/<user>
-# already names this pool, and the user itself arrives here with the user sync (UnixAddUser pullsync), maybe a little later
+# already names this pool, and the user itself arrives here with the user sync (UnixAddUser pullsync), maybe later
 echo "$@" | grep -qw newuserhome && newuserhome='yes' || newuserhome='no'
 # a home that cannot be made for such a user: its usersinfo goes back to NoHome (the user stays, without a home) and Unlin1023
 # says so; when called by UnixAddUser on this node (pool here) usersinfo is not written yet and UnixAddUser does this itself
@@ -130,19 +130,26 @@ then
  /sbin/zfs set ip:addr=$ipaddr $DG/$name
  /sbin/zfs set ip:subnet=$ipsubnet $DG/$name
  /sbin/zfs set status:mount=$active $DG/$name
- # a new user sent here by UnixAddUser: wait (at most 60 s) for its sync copy on this node; still missing, the ids of usersinfo
- # (the sync copy gets the same uid/gid) give the dataset its owner
+ # a new user sent here by UnixAddUser whose sync copy is not on this node yet: the ids of usersinfo (the sync copy gets the
+ # same uid/gid) give the dataset its owner, and the home directory is set by a background job once the copy is here (at
+ # most 600 s). No waiting here: this runs in the node's command consumer (test 619 step 1: a 60 s wait here made the home
+ # jobs 160-170 s long, the consumer lost its connection and the commands queued behind them).
  homeuid=$shortname; homegid=$shortname
+ homelater='no'
  if [ "$newuserhome" = 'yes' ]; then
-  n=0
-  while ! getent passwd "$shortname" >/dev/null 2>&1 && [ $n -lt 60 ]; do sleep 1; n=$((n+1)); done
   getent passwd "$shortname" >/dev/null 2>&1
   if [ $? -ne 0 ]; then
    ids=`/pace/etcdget.py $leaderip usersinfo/$shortname | cut -d/ -f1`
-   homeuid=`echo $ids | cut -d: -f1`; homegid=`echo $ids | cut -d: -f2`
+   echo "$ids" | grep -q '^[0-9][0-9]*:[0-9][0-9]*:' && { homeuid=`echo $ids | cut -d: -f1`; homegid=`echo $ids | cut -d: -f2`; }
+   homelater='yes'
   fi
  fi
- usermod -d /$DG/$name $shortname
+ if [ "$homelater" = 'yes' ]; then
+  ( n=0; while ! getent passwd "$shortname" >/dev/null 2>&1 && [ $n -lt 600 ]; do sleep 2; n=$((n+2)); done
+    getent passwd "$shortname" >/dev/null 2>&1 && usermod -d /$DG/$name $shortname ) </dev/null >/dev/null 2>&1 &
+ else
+  usermod -d /$DG/$name $shortname
+ fi
  chown $homeuid /$DG/$name
  chgrp $homegid /$DG/$name
  chmod 750 /$DG/$name

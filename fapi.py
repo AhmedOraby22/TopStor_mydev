@@ -599,8 +599,8 @@ def postchange(cmndstring,host='leader'):
         ownerip=get('ready/'+host,'--prefix')[0][1]
     except:
         return 'host is not ready'
- with open('/TopStordata/tempdata','a') as f:
-  f.write(str((ownerip, str(msg),'recvreply',myhost))+'\n')
+ # (no copy of the command in /TopStordata/tempdata any more: a debug log, mode 644, read by nothing, that kept every
+ # queued command, the plaintext passwords of UnixAddUser and of the password changes included -- test 619 side finding)
  sendhost(ownerip, str(msg),'recvreply',myhost)
  return 'queued'
 

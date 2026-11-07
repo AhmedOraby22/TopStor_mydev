@@ -14,7 +14,21 @@ echo ip and subnet $ipaddr $ipsubnet >> /root/cifstmp
 docker rm -f $resname
 nmcli conn mod cmynode -ipv4.addresses ${ipaddr}/$ipsubnet
 nmcli conn mod cmynode +ipv4.addresses ${ipaddr}/$ipsubnet
-nmcli conn up cmynode
+# "nmcli conn up cmynode" re-activates the cluster link (bond0 down/up): it ran on EVERY share container try (cifs.py tries up
+# to 5 times), and other jobs of this node lost the leader meanwhile (test 619 step 1: a user sync copy read from the leader
+# during the gap failed). The address is applied only when it is not on the node yet, without a re-activation where
+# NetworkManager can (device reapply); "conn up" stays as the fallback.
+ip -o -4 addr show | awk '{print $4}' | grep -qx "${ipaddr}/$ipsubnet"
+if [ $? -ne 0 ];
+then
+	cmydev=`nmcli -g GENERAL.DEVICES conn show cmynode 2>/dev/null | cut -d, -f1`
+	if [ -z "$cmydev" ] || ! nmcli dev reapply $cmydev
+	then
+		nmcli conn up cmynode
+	fi
+	n=0
+	while ! ip -o -4 addr show | awk '{print $4}' | grep -qx "${ipaddr}/$ipsubnet" && [ $n -lt 10 ]; do sleep 1; n=$((n+1)); done
+fi
 echo $vtype | grep '_' 
 if [ $? -ne 0 ];
 then

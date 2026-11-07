@@ -85,7 +85,32 @@ for key, val in get(leaderip, 'hosts', '--prefix'):
         break
 EOF
 }
+# The home sent to the pool owner (end of this script): the owner reports the result itself (NFS1007 and the key
+# volumes/HOMEE/<owner>/<pool>/<user>_<id>; or NFS1006 + Unlin1023 and usersinfo back to NoHome). A job that never ran there
+# told nobody (test 619 step 1: the owner's command consumer lost it) and the user stayed recorded with a home that does not
+# exist. Run in the background (never in the command consumer): wait for either result, at most 1800 s (the owner runs its
+# commands one at a time, a home takes 2-3 min); none and usersinfo still as written here -> the same as a failed send.
+homewatch() {
+	local etcd=$1 pool=$2 user=$3 req=$4 start=$5 n=0 info
+	while [ $n -lt ${TS_HOMEWAIT:-1800} ]
+	do
+		sleep ${TS_HOMESTEP:-10}; n=$((n+${TS_HOMESTEP:-10}))
+		/pace/etcdget.py $etcd volumes/HOMEE --prefix | grep -q "/$pool/${user}_[0-9]*'," && return 0
+		info=`/pace/etcdget.py $etcd usersinfo/$user`
+		# changed by the owner (NoHome), deleted or made again: not ours any more ('_1' can also be a failed read: wait on)
+		[ -n "$info" -a "$info" != '_1' -a "$info" != "$start" ] && return 0
+	done
+	/pace/etcdget.py $etcd volumes/HOMEE --prefix | grep -q "/$pool/${user}_[0-9]*'," && return 0
+	info=`/pace/etcdget.py $etcd usersinfo/$user`
+	[ "$info" = "$start" ] || return 0
+	echo `date` home of $user on $pool not made by the owner in time, the user gets no home >> /root/unixadduserhome.log
+	docker exec etcdclient /TopStor/logmsg.py NFS1006 error $req $pool/$user
+	/TopStor/etcdput.py $etcd 'usersinfo/'$user "`echo "$info" | sed "s|:/$pool/|:/NoHome/|"`"
+	usermod -d /NoHome/$user $user
+	docker exec etcdclient /TopStor/logmsg.py Unlin1023 warning $req $user
+}
 homeowner=''
+addrc=0
 privilege="Box_Users";
 contrun=`./privthis.sh $privilege $userreq`;
 echo contrun $contrun, $userreq
@@ -230,14 +255,27 @@ then
 # 	echo "$currentcifs" | while read y; do docker exec $y  sh /hostetc/smbuserfix.sh x $username $userpass;  done; 
 # fi
  docker exec intsmb /root/smbuser.sh $username $userpass
- userline=`cat /etc/passwd | grep $username`
+ # the exact name (q020u1 must not take the passwd line of q020u13)
+ userline=`grep "^$username:" /etc/passwd`
  if [ $? -ne  0  ]; then
+ 	addrc=1
  	echo $pullsync | grep pull
  	if [ $? -ne 0 ]
 	then
   		notify /TopStor/logmsg.py Unlin1020 error $userreq $username
+	else
+		# the sync copy of an accepted user failed on this node (test 619 step 1: q020u13 never made on node2, nothing said
+		# so and the node reported in sync): logged here every time, Unlin1020 once per user until a copy works; the exit
+		# code makes the sync (pace usersyncall/checksyncs) keep the request and try again on its next pass
+		echo `date` sync copy of user $username failed on `hostname` >> /root/usersyncfail.log
+		if [ ! -f /tmp/usersyncfail.$username ]
+		then
+			touch /tmp/usersyncfail.$username
+			notify /TopStor/logmsg.py Unlin1020 error $userreq $username
+		fi
 	fi
- else 
+ else
+  rm -f /tmp/usersyncfail.$username
  # openssl rsautl -encrypt -inkey key/public_key.pem -pubin -in <( echo $userpass) -out key/$username;  
   userid=`echo $userline | awk -F':' '{print $3}'`
   usergd=`echo $userline | awk -F':' '{print $4}'`
@@ -277,16 +315,21 @@ then
  fi
  # the home on another node (see VolumeCreateHOME above): sent to the pool owner's command queue, as fapi postchange does;
  # 'newuserhome' tells VolumeCreateHOME that usersinfo already names this pool for the new user (not "already has a home")
- # and to wait there for the user's sync copy. It reports NFS1006/NFS1007 itself and sets usersinfo to NoHome if it fails.
+ # (the user's sync copy may come later). It reports NFS1006/NFS1007 itself and sets usersinfo to NoHome if it fails;
+ # homewatch reports a home that the owner never made.
  if [ -n "$homeowner" -a "$usercreated" = 'yes' ]
  then
 	ownerhost=`echo $homeowner | awk '{print $1}'`
 	ownerip=`echo $homeowner | awk '{print $2}'`
 	homemsg="{'req': 'Pumpthis', 'reply': ['/TopStor/VolumeCreateHOME', '$leaderip', '$homePool', '$username', '$size', '$username', '$HomeAddr', '$HomeSubnet', 'active', '$userreq', '$ownerhost', '$userreq', 'newuserhome']}"
 	echo sending to $ownerhost $ownerip: $homemsg
+	homeinfo=`/pace/etcdget.py $etcd usersinfo/$username`
 	/TopStor/sendhost.py $ownerip "$homemsg" recvreply $myhost
-	if [ $? -ne 0 ]
+	if [ $? -eq 0 ]
 	then
+		# confirmed in the background (homewatch above); no output may reach the command consumer's pipe
+		homewatch "$etcd" "$homePool" "$username" "$userreq" "$homeinfo" </dev/null >/dev/null 2>&1 &
+	else
 		echo home of $username could not be sent to $ownerhost, the user gets no home
 		docker exec etcdclient /TopStor/logmsg.py NFS1006 error $userreq $homePool/$username
 		/TopStor/etcdput.py $etcd 'usersinfo/'$username "`/pace/etcdget.py $etcd usersinfo/$username | sed "s|:/$homePool/|:/NoHome/|"`"
@@ -296,4 +339,6 @@ then
  fi
  echo hi3
  notify /TopStor/logqueue.py `basename "$0"` finish $userreq 
+ # 1: the user is not in passwd (the sync copy then keeps its request for the next pass)
+ exit $addrc
 fi

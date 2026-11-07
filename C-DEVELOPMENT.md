@@ -3979,3 +3979,28 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   Unlin1027. topstorweb: the Users page "Import Template" button opens a file picker and POSTs the file as multipart `file`
   to `users/uploadUsers` (it had no handler); `dist/Template.xlsx` (deleted in f02a647f, Download Template was 404) is
   restored with the columns UsersMassAddition.py reads: name, Password, Volpool, Volsize, HomeAddress, HomeSubnet, groups.
+
+* **QSD5.317, test 619 (QX-020) step 1:** 25 users added through the API, 5 with a home on pool P1 imported on node2 (not the
+  leader): two homes were never made and the users were still recorded with them, and one user copy was missing on node2 while
+  node2 reported in sync. Causes: (1) `topstorrecvreply.py` consumed with auto_ack and ran each command inside the pika callback,
+  so during a 160-170 s home job no heartbeat was sent, the broker closed the connection ("missed heartbeats from client") and
+  every command already pushed to the client was lost (old weakness, exposed by QSD5.316 sending home jobs to the owner);
+  (2) `VolumeCreateHOME newuserhome` waited up to 60 s in the consumer for the user's sync copy; (3) `cifs.sh` ran `nmcli conn up
+  cmynode` (bond0 down/up) on every share container try, and a user copy that read from the leader in that gap failed; (4) that
+  failure was silent (UnixAddUser pull mode, `usersyncall.thread_add` ignored the result, checksyncs marked the request done) and
+  the leader only checked that the home request was published. Fix: the consumer takes one command at a time with `basic_get`
+  (auto_ack) only when the previous one has finished, runs it in a (non-daemon) worker thread and services the connection with
+  `process_data_events` meanwhile: order and one-at-a-time are kept, commands not started stay in the broker queue (a dropped
+  connection loses none; the looper restarts the script after the running command ends), a failing command no longer ends the
+  consumer. `VolumeCreateHOME newuserhome` does not wait: the dataset is chowned with the uid/gid of usersinfo (the copy gets the
+  same ids) and a detached background job sets the home directory once the copy is there (<= 600 s). `cifs.sh` re-applies the
+  connection only when the share address is not on the node, with `nmcli dev reapply` (fallback `conn up`). `UnixAddUser`
+  (leader) starts a detached `homewatch` after the send: success = the owner's `volumes/HOMEE/<owner>/<pool>/<user>_<id>` key,
+  failure already reported = usersinfo changed (owner's NFS1006 + Unlin1023 + NoHome); none within 1800 s and usersinfo
+  unchanged -> NFS1006 + usersinfo NoHome + passwd /NoHome/<user> + Unlin1023 (as for a failed send). `UnixAddUser` matches the
+  passwd line by exact name, exits 1 when the user is not in passwd, and in pull mode logs the failure to
+  /root/usersyncfail.log and sends Unlin1020 once per user until a copy works; pace `thread_add` returns False on a failed
+  leader read, a missing usershash or a non-zero UnixAddUser (logged to /root/usersyncfail.log), `oneusersync` returns it and
+  `checksyncs` keeps the user sync request (flag 0) for the next pass. Side fix: fapi `postchange` no longer appends every
+  queued command (plaintext passwords included) to /TopStordata/tempdata (mode 644, read by nothing). Unchanged: etcd keys and
+  values, log codes, guards, the queue and its message format, the home of a pool on the leader, the delete path.
