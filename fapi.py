@@ -167,14 +167,34 @@ def has_privilege(priv, user):
         except Exception:
                 return False
 
-def is_unique_name(name):
-        global leaderip
-        allvols = str(get('vol', '--prefix'))
-        alluser= str(get('user','--prefix'))
-        allgrp= str(get('group','--prefix'))
-        allnames = allvols+'/'+alluser+'/'+allgrp
-        name_pattern = rf'\b{re.escape(name)}\b' 
-        if bool(re.search(name_pattern,allnames)):
+def _etcdkeys(prefix):
+        # the keys of a --prefix read; etcdget answers [(key, value), ...] or ['_1'] when there is nothing
+        try:
+                return [str(x[0]) for x in get(prefix, '--prefix') if isinstance(x, (tuple, list)) and len(x) > 0]
+        except Exception:
+                return []
+
+def volshortname(volkey):
+        # volumes/<type>/<host>/<pool>/<name>_<id> -> <name> (a replica keeps its <name>_<id>: the same short name)
+        return re.sub(r'_[0-9]+$', '', str(volkey).rstrip('/').split('/')[-1])
+
+def is_unique_name(name, vols=True):
+        # 1000 when a user, a group or (vols=True) a volume has EXACTLY this name. It was a \b regex over the whole etcd dump:
+        # `_` is a word character, so the volume q022c (key .../q022c_268804297) never matched and a user/group q022c was
+        # created next to it, while any word of any value (member names, pools, hosts) did match.
+        # volumes/create passes vols=False: a second volume with the same short name is refused by its script (Unlin1021vv),
+        # and a replica (<name>_repli) is not stopped by its own source volume.
+        name = str(name)
+        taken = False
+        for key in _etcdkeys('users'):
+                part = key.split('/')
+                if len(part) >= 2 and part[0] in ('usersinfo', 'usershash', 'usersigroup') and part[1] == name:
+                        taken = True
+                        break
+        if not taken and vols:
+                # a home (volumes/HOME*/.../<user>_<id>) is the user's own and goes with the user (userdel deletes it later)
+                taken = any(volshortname(key) == name for key in _etcdkeys('volumes/') if not key.startswith('volumes/HOME'))
+        if taken:
                     print("Invalid Name")
                     return 1000 
         print("Valid Name")
@@ -1597,7 +1617,7 @@ def volumecreate(data):
   return {'response': 'baduser'}
  datastr = ''
  datatype = ip_context(data['type'], data.get('domname',''))
- isvu =  int(is_valid_ip(data['ipaddress']))+int(is_unique_ip(data['ipaddress'],datatype))+int(is_unique_name(data['name']))
+ isvu =  int(is_valid_ip(data['ipaddress']))+int(is_unique_ip(data['ipaddress'],datatype))+int(is_unique_name(data['name'], vols=False))
  if isvu == 0:
     print('ip is valid')
  else:

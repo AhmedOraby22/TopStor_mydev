@@ -4025,3 +4025,16 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   never a `_1` value. `UnixChangeGroup` skips its `sleep 3` on a follower (members of a new group reached node2 after 68-84 s).
   Unchanged: etcd keys and value format, log codes, the Everyone guards (never changed, refusals), exact-name member semantics,
   the leader's request order and stamps.
+* **QSD5.319, test 621 (QX-022) step 4:** a user `q022c` and a group `q022d` were created while the NFS volumes `q022c` and
+  `q022d` existed. Not a regression (same in QSD5.315). Cause: a volume is stored as `volumes/<type>/<host>/<pool>/<name>_<id>`
+  and `_` is a word character, so fapi `is_unique_name` (`\b<name>\b` over the whole etcd dump of volumes, users and groups) and
+  the `grep -w` volume checks of `UnixAddUser` and `UnixAddGroup` never matched `<name>_<id>`; the regex also matched any word of
+  any value (member names, pools, hosts). Fix: fapi `is_unique_name(name, vols=True)` compares exact names: the key name of
+  `usersinfo/`, `usershash/`, `usersigroup/` rows, and the short name of every `volumes/` key (last path element with a trailing
+  `_<digits>` removed, new `volshortname`); home volumes (`volumes/HOME*`, the user's own `<user>_<id>`, deleted later by
+  userdel) are not counted, so delete/add of the same user still works. `volumes/create` calls it with `vols=False` (users and
+  groups only): a second volume with the same short name still passes fapi and is refused by its script with `Unlin1021vv`
+  (the sheet's step 6), and a replica is not stopped by its source. `UnixAddUser` and `UnixAddGroup` match the volume key
+  `/<name>[_<digits>]',` (homes left out) instead of `grep -w`. `UnixAddUser`: the Unlin1021uv branch called
+  `docker exec etcdclient/TopStor/logqueue.py` (no space), so the job was never marked finished. Unchanged: log codes
+  (IPnamuqfa, Unlin1021uv/gv/vv/uu), etcd keys and values, the VolumeCreate* script checks, the exact user/group names of QSD5.316.

@@ -137,11 +137,12 @@ then
 		if [ $? -ne 0 ]
 		then
  
- 			/pace/etcdget.py $etcd volumes --prefix | grep -w $username
+ 			# a volume key ends in /<name>_<id> (`grep -w` never matched: `_` is a word character); a home (volumes/HOME*) is the user's own and goes with the user
+ 			/pace/etcdget.py $etcd volumes --prefix | grep -v "^('volumes/HOME" | grep "/${username}\(_[0-9][0-9]*\)\{0,1\}',"
 	 		if [ $? -eq 0 ];
  			then
  				docker exec etcdclient /TopStor/logmsg.py Unlin1021uv warning $userreq $username
-  				docker exec etcdclient/TopStor/logqueue.py `basename "$0"` finish $userreq 
+  				docker exec etcdclient /TopStor/logqueue.py `basename "$0"` finish $userreq 
   				exit
  			fi
 		

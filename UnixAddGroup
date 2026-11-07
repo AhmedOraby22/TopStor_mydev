@@ -41,7 +41,8 @@ echo 2222222222222222222222222222222222222222222222
  echo s$pullsync | grep pull
  if [ $? -ne 0 ]
  then
- 			/pace/etcdget.py $leaderip volumes --prefix | grep -w $username
+ 			# a volume key ends in /<name>_<id> (`grep -w` never matched: `_` is a word character); a home (volumes/HOME*) is the user's own and goes with the user
+ 			/pace/etcdget.py $leaderip volumes --prefix | grep -v "^('volumes/HOME" | grep "/${username}\(_[0-9][0-9]*\)\{0,1\}',"
  			if [ $? -eq 0 ];
  			then
   				docker exec etcdclient /TopStor/logmsg.py Unlin1021gv warning $userreq $username
