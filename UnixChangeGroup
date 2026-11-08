@@ -104,7 +104,8 @@ then
   then
    if ! gpasswd -M "$members" $groupname;
    then
-    # gpasswd -M refused: one member at a time (removed ones first)
+    # gpasswd -M refused: one member at a time (removed ones first), from the list as it is now
+    current=`getent group $groupname | cut -d: -f4`
     for l in `echo "$current" | tr ',' ' '`; do mlist_has "$members" "$l" || gpasswd -d $l $groupname; done
     for l in `echo "$members" | tr ',' ' '`; do mlist_has "$current" "$l" || gpasswd -a $l $groupname; done
    fi
