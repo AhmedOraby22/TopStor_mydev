@@ -4089,3 +4089,17 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   per-member Unst1024/Unsu1024 (the group's Unst1025/Unsu1025 stay). Unchanged: log codes (Unlin1118, Unlin1122, Unlin1110),
   etcd keys and value format, exact-name members (test 614), the Everyone guards, the NoUser (empty group) path, the
   replication receiver path, `UnixChangeUser` for a user's own change.
+* **QSD5.324, test 631 (QX-032) step 3:** after a take-over the pool's read cache stayed the stopped owner's disk (UNAVAIL) and
+  `/root/fixcachelocality.log` said "cache is already local". Causes: pace `putzpool.py` gave every pool disk the host of the
+  FIRST LIO lsscsi line (the second match condition, the backstore prefix such as `sdb` of `sdb-<host>` among the node's own
+  internal disks, is true on every node), and corrected the host only for disks that are not OFF/UNAVAIL/FAULT/REMOVED, so a
+  lost remote disk carried the importing node's name; `fixcachelocality.py` trusted that host only, and took candidates only
+  from the free raid with a strictly smaller disk. Fix: `putzpool.py` matches a pool disk to an lsscsi line by its own WWN only
+  (`scsi-<id>`, `wwn-0x<id>`, by-id path, `-partN`; OFFLINE disks too); a disk without its own line gets host `UNAVAIL` (`_1`
+  when the node has no LIO line at all, as before). `fixcachelocality.py` counts a cache disk as not local when its host is
+  another node or `_1`/`UNAVAIL`, its record is missing or UNAVAIL/FAULT/REMOVED/OFFLINE, or `zpool status` on this node shows
+  it not ONLINE; it removes it by by-id name or, when the path is gone, by its guid (`zpool status -g`); the replacement is a
+  spare cache disk of this node (pree `cache` raid / etcd `cachespares`) first, else the free local disk of the smallest size
+  tier, else (all the same size) the smallest free local disk when one more stays free for self-heal; no add when a local cache
+  remains. Unchanged: the log lines of fixcachelocality.log (new lines added), etcd keys and formats, disk/raid changeop values
+  for matched disks, `updatecache` (fapi) selection.
