@@ -4103,3 +4103,11 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   tier, else (all the same size) the smallest free local disk when one more stays free for self-heal; no add when a local cache
   remains. Unchanged: the log lines of fixcachelocality.log (new lines added), etcd keys and formats, disk/raid changeop values
   for matched disks, `updatecache` (fapi) selection.
+* **QSD5.325, test 632 (QX-033) step 4:** after Decommission Pool -> Delete -> Confirm Destruction the pool card stayed (collapsed,
+  re-mounted) for the ~20 s backend delete. Cause: topstorweb `src/QDisks.jsx` `handleDeletePool` removed the pool from state,
+  then called `loadData()` at once, and the 5 s poll did the same; `loadData` set the full `pools/dgsinfo` reply, which still lists
+  the pool while the async (RabbitMQ) delete runs. Fix: a `pendingDeletes` ref (pool -> start time) is set before the delete
+  request; every `loadData`/poll reply is filtered through it until the server no longer lists the pool (then the entry is
+  dropped). After 120 s still listed, or on an API error, or on a `DGfa*` notification naming the pool (NotificationPoller now
+  dispatches each new notification as a window `app-notification` event), the card shows again with a red notice in the page's
+  existing error style. Unchanged: API calls, poll interval, card UI and styles.
