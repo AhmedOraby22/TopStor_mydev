@@ -4038,3 +4038,11 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   `/<name>[_<digits>]',` (homes left out) instead of `grep -w`. `UnixAddUser`: the Unlin1021uv branch called
   `docker exec etcdclient/TopStor/logqueue.py` (no space), so the job was never marked finished. Unchanged: log codes
   (IPnamuqfa, Unlin1021uv/gv/vv/uu), etcd keys and values, the VolumeCreate* script checks, the exact user/group names of QSD5.316.
+* **QSD5.320, test 624 (QX-025) step 1:** the `Priv1004` refusal of `hosts/config` (also `hosts/joincluster`, `user/changepass`
+  and the password part of `Hostconfig.py`) read "Not done, the user has no privilege for this action q025u1 user. [...]parseerror."
+  in info/notification and "... action q025u1 user 1793970901." in info/logs. Not a regression (upstream af543aee). Cause: the
+  template `... action : user :` has two `:` placeholders but every caller passes only the user. Fix: `msgsglobal.txt` Priv1004 is
+  `... action \: user \: :`; a `\:` token is a literal `:` (not a placeholder) in fapi `getnotification()` and `getlogs.notifthis()`,
+  so the text is "Not done, the user has no privilege for this action : user : q025u1." (logmsg2.sh still counts one placeholder;
+  no other code uses `\:`). `Priv.py`: `Priv1002` was sent as `'Priv1002 '` (trailing space), which shifted the fields of
+  info/notification for every privilege change. Unchanged: callers, log codes and log line format (`Priv1004@@@<user> <epoch>`).

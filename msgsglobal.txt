@@ -446,7 +446,7 @@ DGst24:1: : from :: Creating RAID10 pool : using mirror pairs of disks : ......
 DGsu24:2: : from :: Success creating RAID10 pool : using mirror pairs of disks :
 DGfa24:2: : from :: Failed creating RAID10 pool : using mirror pairs of disks :
 DGfa25:2: : from :: Pool not deleted, it still has volumes (delete them first) :
-Priv1004:2: : from :: Not done, the user has no privilege for this action : user :
+Priv1004:2: : from :: Not done, the user has no privilege for this action \: user \: :
 Volpool1:2: : from :: Volume not created, the pool does not exist or was not chosen : volume :
 ISCSI1000:1: : from :: Deleting iSCSI volume :
 ISCSI1001:2: : from :: Problem occurred while deleting iSCSI volume :

@@ -26,7 +26,7 @@ def changepriv(leader, leaderip, myhost, myip, user,priv,request='admin'):
  res = subprocess.run(cmdline,stdout=subprocess.PIPE).stdout
  if 'true' not in res.decode('utf-8'):
   return
- logmsg.sendlog('Priv1002 ','info',request,user)
+ logmsg.sendlog('Priv1002','info',request,user)
  userinfo = get(etcdip,'usersinfo/'+user)
  leftpart = userinfo[0].split('/')[0:4]
  put(leaderip, 'usersinfo/'+user, '/'.join(leftpart)+'/'+priv)

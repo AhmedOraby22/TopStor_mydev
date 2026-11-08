@@ -1555,7 +1555,10 @@ def getnotification(data):
  msgbody = '.'
  notifc = 6
  for word in msg[4:]:
-  if word == ':':
+  if word == r'\:':
+   # an escaped colon in msgsglobal.txt is a literal ':' in the text, not a placeholder (e.g. Priv1004)
+   msgbody = msgbody[:-1]+' :.'
+  elif word == ':':
    try:
     msgbody = msgbody[:-1]+' '+notifbody[notifc]+'.'
    except:
