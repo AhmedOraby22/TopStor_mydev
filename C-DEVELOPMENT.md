@@ -4046,3 +4046,15 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   so the text is "Not done, the user has no privilege for this action : user : q025u1." (logmsg2.sh still counts one placeholder;
   no other code uses `\:`). `Priv.py`: `Priv1002` was sent as `'Priv1002 '` (trailing space), which shifted the fields of
   info/notification for every privilege change. Unchanged: callers, log codes and log line format (`Priv1004@@@<user> <epoch>`).
+* **QSD5.321, test 625 (QX-026) step 5:** `users/usersauth` for a user that does not exist answered HTTP 200 (the request echoed),
+  `Priv.py` wrote `usersinfo/<name> = '_1/<privs>'` (etcdget's missing-key sentinel) with `Priv1003` "Success", and from then on
+  `users/userlist` crashed (`split('/')[3]`, IndexError) with HTTP 500 and the interactive Werkzeug debugger page, because fapi ran
+  with `DEBUG = True` (also seen in test 601). Not a regression (same code in QSD5.315). Fix: fapi `usersauth` refuses a missing or
+  malformed `usersinfo/<tochange>` (new `usersinfo_ok`: at least 4 `/` fields, not `_1`/`-1`) or empty `tochange`/`auths` with
+  `{'response': 'error', 'message': 'invalid or missing parameter'}` and the new log `Priv1005` ("Privileges not changed, no such
+  user"), writing nothing; `Priv.py changepriv` refuses the same rows (Priv1005, no put, no sync). `users/userlist` skips a
+  malformed row and `users/userauths` answers no privileges for it (was UnboundLocalError for an unknown user); each bad row is
+  printed once on fapi's stderr. Flask debug is off (`DEBUG False`, `app.run(debug=False, use_debugger=False, use_reloader=False)`)
+  and an `@app.errorhandler(Exception)` answers unexpected exceptions with a generic JSON 500 `{'response': 'error', 'message':
+  'internal error'}` (traceback only on fapi's stderr); werkzeug HTTP errors (404, 405, ...) keep Flask's own answer.
+  Unchanged: well formed rows, the Priv1002/1003 flow, the userlist reply format.

@@ -68,7 +68,11 @@ losthosts = []
 possiblehosts = []
 pooldict = dict()
 app = flask.Flask(__name__)
-app.config["DEBUG"] = True
+# QSD5.321: no Flask debug mode.  With DEBUG True app.run() served the interactive Werkzeug debugger (tracebacks with source
+# and local values, a PIN-protected console = remote code execution as root) on port 5001 of every interface for any
+# unhandled exception (tests 601, 625).  Unhandled exceptions now answer the generic JSON 500 of fapi_unhandled() below.
+app.config["DEBUG"] = False
+app.config["PROPAGATE_EXCEPTIONS"] = False
 logcatalog = ''
 with open('/TopStor/msgsglobal.txt') as f:
  logcatalog = f.read().split('\n')
@@ -77,6 +81,21 @@ for log in logcatalog:
  msgcode= log.split(':')[0]
  logdict[msgcode] = log.replace(msgcode+':','').split(' ')
 allinfo = 0
+
+from werkzeug.exceptions import HTTPException as _HTTPException
+@app.errorhandler(Exception)
+def fapi_unhandled(e):
+ # HTTP errors (404, 405, 400 ...) keep Flask's own answer; any other exception is logged on the node (stderr of fapi,
+ # with the traceback) and the client gets only a generic JSON 500, never a traceback or the debugger
+ if isinstance(e, _HTTPException):
+  return e
+ try:
+  print('fapi: unhandled exception on '+str(request.method)+' '+str(request.path), file=sys.stderr)
+  traceback.print_exc()
+ except Exception:
+  pass
+ return jsonify({'response': 'error', 'message': 'internal error'}), 500
+
 
 def is_valid_ip(ip):
     try:
@@ -629,6 +648,23 @@ def dict_factory(cursor, row):
     for idx, col in enumerate(cursor.description):
         d[col[0]] = row[idx]
     return d
+
+# usersinfo/<user> = <uid>/<pool>/<home>/<size>/<privileges...>: a row with fewer than 4 '/' fields (e.g. '_1/Logs-true' that
+# Priv.py wrote for a user that did not exist before QSD5.321) or etcdget's '_1' / '-1' for a missing key is not a user
+def usersinfo_ok(prop):
+ prop = str(prop) if prop is not None else ''
+ if prop in ('', '_1', '-1', 'None'):
+  return False
+ fields = prop.split('/')
+ return len(fields) >= 4 and fields[0] not in ('_1', '-1', '')
+
+_usersinfo_badlogged = set()
+def usersinfo_badrow(username, prop):
+ # printed once per row value (fapi's stderr), not on every list call
+ key = str(username)+'='+str(prop)
+ if key not in _usersinfo_badlogged:
+  _usersinfo_badlogged.add(key)
+  print('fapi: skipping malformed usersinfo row usersinfo/'+key, file=sys.stderr)
 
 def getusers():
  global leaderip
@@ -1753,7 +1789,14 @@ def usersauth(data):
  global allinfo
  if 'baduser' in data['response']:
   return {'response': 'baduser'}
- cmndstring = '/TopStor/Priv.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+data['tochange']+' '+data['auths'].replace(',','/')+' '+data['user']
+ # QSD5.321 (test 625 step 5): only an existing user (a well formed usersinfo/<user> row) can get privileges; before, any
+ # name was queued to Priv.py, which wrote usersinfo/<name> = '_1/<privs>' and broke users/userlist for everybody
+ tochange = str(data.get('tochange', '') or '')
+ auths = str(data.get('auths', '') or '')
+ if not tochange or not auths or not usersinfo_ok(get('usersinfo/'+tochange)[0]):
+  logmsg.sendlog('Priv1005','error',data['user'],tochange if tochange else '-')
+  return {'response': 'error', 'message': 'invalid or missing parameter'}
+ cmndstring = '/TopStor/Priv.py '+leader+' '+leaderip+' '+myhost+' '+myhostip+' '+tochange+' '+auths.replace(',','/')+' '+data['user']
  postchange(cmndstring)
  return data
 
@@ -2385,9 +2428,13 @@ def userauths(data):
  if  data['username'] == 'admin':
   return {'auths':'true','response':data['response']}
  userlst = etcdgetjson(leaderip,'usersinfo','--prefix')
+ priv = ''    # QSD5.321: an unknown user or a malformed row answers no privileges, not an UnboundLocalError (HTTP 500)
  for user in userlst:
   username = user['name'].replace('usersinfo/','')
   if username == data['username']:
+   if not usersinfo_ok(user.get('prop')):
+    usersinfo_badrow(username, user.get('prop'))
+    break
    priv = '/'.join(user['prop'].split('/')[4:])
    break
  return jsonify({'auths':priv, 'response':data['response']})
@@ -2457,6 +2504,9 @@ def api_users_userslist(data):
  uid = 0
  for user in userlst:
   username = user['name'].replace('usersinfo/','')
+  if not usersinfo_ok(user.get('prop')):
+   usersinfo_badrow(username, user.get('prop'))    # QSD5.321: a malformed row is skipped, not an HTTP 500 for the whole list
+   continue
   usersize = user['prop'].split('/')[3]
   userpool = user['prop'].split('/')[1]
   priv = '/'.join(user['prop'].split('/')[4:])
@@ -2714,6 +2764,6 @@ if __name__=='__main__':
     getalltime()
     _mark('getalltime (disks, pools, volumes) -- starting the web server now')
    #myhostip = sys.argv[5]
-    app.run(host="0.0.0.0", port=5001)
+    app.run(host="0.0.0.0", port=5001, debug=False, use_debugger=False, use_reloader=False)
 
 

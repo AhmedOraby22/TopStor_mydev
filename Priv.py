@@ -26,9 +26,14 @@ def changepriv(leader, leaderip, myhost, myip, user,priv,request='admin'):
  res = subprocess.run(cmdline,stdout=subprocess.PIPE).stdout
  if 'true' not in res.decode('utf-8'):
   return
- logmsg.sendlog('Priv1002','info',request,user)
  userinfo = get(etcdip,'usersinfo/'+user)
- leftpart = userinfo[0].split('/')[0:4]
+ # QSD5.321 (test 625 step 5): a user that does not exist (etcdget answers '_1') or a malformed row (fewer than 4 '/'
+ # fields) is refused and nothing is written; before, usersinfo/<user> = '_1/<privs>' was written with Priv1003 "Success"
+ leftpart = str(userinfo[0]).split('/')[0:4] if len(userinfo) > 0 else []
+ if len(leftpart) < 4 or leftpart[0] in ('_1', '-1', '', 'None'):
+  logmsg.sendlog('Priv1005','error',request,user)
+  return
+ logmsg.sendlog('Priv1002','info',request,user)
  put(leaderip, 'usersinfo/'+user, '/'.join(leftpart)+'/'+priv)
  dosync(leader, leaderip, 'sync/priv/'+user,'sync/priv/'+user+'/request', 'priv_'+user+'_'+str(stamp()))
  #put(leaderip, 'user/'+myhost,str(stamp()))
