@@ -40,6 +40,13 @@ then
  /sbin/zfs set ip:addr=$ipaddr $DG/$name
  /sbin/zfs set ip:subnet=$ipsubnet $DG/$name
  /sbin/zfs set status:mount=$active $DG/$name
+ # the dataset ACL follows the new groups as in VolumeActivateNFS (a removed or deleted group kept group:<gid>:rwx, test 627)
+ setfacl -b /$DG/$name
+ echo $writev | grep -qiw nogroup
+ if [ $? -ne 0 ];
+ then
+  for grp in `echo $writev | sed 's/,/ /g'`; do setfacl -m g:$grp:rwx /$DG/$name; done
+ fi
  docker rm -f NFS-$oldipaddr
  echo $older | grep -w $ipaddr/$ipsubnet
  if [ $? -ne 0 ];

@@ -4058,3 +4058,15 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   and an `@app.errorhandler(Exception)` answers unexpected exceptions with a generic JSON 500 `{'response': 'error', 'message':
   'internal error'}` (traceback only on fapi's stderr); werkzeug HTTP errors (404, 405, ...) keep Flask's own answer.
   Unchanged: well formed rows, the Priv1002/1003 flow, the userlist reply format.
+* **QSD5.322, test 627 (QX-028) step 3:** after `groups/groupdel` of a group that a CIFS share used, the dataset ACL on the pool
+  owner kept `group:<gid>:rwx` (a numeric orphan once the gid was free) and `/TopStordata/smb.<share>` kept `write list = <group>`,
+  so a group created later with that name or gid got the old rights (steps 4-5). Not a regression (same code in QSD5.315). Cause:
+  `UnixDelGroup` only runs userdel/groupdel and removes `usersigroup/<group>`; the `setfacl -m g:<grp>:rwx` of VolumeCreate/
+  Change/ActivateCIFS was never undone. Fix: fapi `groupdel` (when the requester has Box_Users) first calls the new
+  `volumes_drop_group()`: for every CIFS / NFS / HOME share whose groups list the group by exact name it queues, on the node that
+  owns the pool (`postchange(..., owner)`, the volumes/config path), `VolumeChange<type>` with the group taken out
+  (`groups_without()`; `NoGroup` when none is left, Everyone alone stays Everyone). The change scripts rewrite etcd, the smb conf
+  and the ACL (`setfacl -b -R`, which also clears the default entries, then the remaining groups). `VolumeChangeNFS` now also
+  resets the ACL to the new groups (as VolumeActivateNFS does; it changed only etcd/exports before). The change runs as the
+  requester when he has the share's privilege, else as `system`. Unchanged: UnixDelGroup, log codes (VolCst01/VolCsu01,
+  Unlin1104/Unlin1110), etcd formats, the Everyone guard; domain shares and iSCSI are not touched.

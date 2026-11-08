@@ -2104,6 +2104,44 @@ def volumedel(data):
         		 
  return data
 
+# The groups of a share without <group> (exact names; 'NoGroup' when none is left, as volumes/config sends it).
+def groups_without(groups, group):
+ rest = [g for g in str(groups).split(',') if g and g not in ('NoGroup', 'nogroup', group)]
+ return only_everyone(','.join(rest)) if rest else 'NoGroup'
+
+# A group delete (test 627 step 3): UnixDelGroup removed only the unix group and usersigroup/<group>; the shares that listed
+# the group kept it in etcd, in their smb conf (write list = <group>) and in the dataset ACL (group:<gid>:rwx, a numeric orphan
+# once the gid is free), so a group created later with that name or gid got the old rights.  Before UnixDelGroup is queued,
+# every CIFS / NFS / HOME share that lists the group is changed on the node that owns its pool with the command volumes/config
+# sends (VolumeChange<type>), the group taken out: the scripts rewrite etcd, the smb conf / exports and the ACL (setfacl -b,
+# then the remaining groups by name).  Domain shares (groups 'DOMAIN') and iSCSI have no group list and are left alone.
+def volumes_drop_group(group, userreq):
+ try:
+  getalltime('yes')
+  vols = list(allinfo['volumes'].values())
+ except Exception as e:
+  print('volumes_drop_group: no volumes info', e)
+  return
+ for volume in vols:
+  prot = str(volume.get('prot', ''))
+  if prot in ('CIFS', 'NFS'):
+   vtype = prot
+  elif 'HOME' in prot:
+   vtype = 'HOME'
+  else:
+   continue
+  if group not in str(volume.get('groups', '')).split(','):
+   continue
+  try:
+   owner = allinfo['hosts'][allinfo['pools'][volume['pool']]['host']]['name']
+   user = userreq if has_privilege(vtype, userreq) else 'system'
+   datastr = volume['pool']+' '+volume['name']+' '+str(volume['quota'])+' '+groups_without(volume['groups'], group)+' '+\
+             volume['ipaddress']+' '+str(volume['Subnet'])+' '+volume['statusmount']+' '+volume['host']+' '+user
+  except Exception as e:
+   print('volumes_drop_group: skipped', volume.get('name'), e)
+   continue
+  postchange('/TopStor/VolumeChange'+vtype+' '+leaderip+' '+datastr, owner)
+
 @app.route('/api/v1/groups/groupdel', methods=['GET','POST'])
 @login_required
 @audit_command
@@ -2113,7 +2151,9 @@ def groupdel(data):
  if data.get('name') == EVERYONE:
   data['error'] = 'everyonefixed'
   return data
- cmndstring = '/TopStor/UnixDelGroup '+leaderip+' '+data.get('name')+' '+data['user'] 
+ if has_privilege('Box_Users', data['user']):
+  volumes_drop_group(str(data.get('name')), data['user'])
+ cmndstring = '/TopStor/UnixDelGroup '+leaderip+' '+data.get('name')+' '+data['user']
  postchange(cmndstring)
  return data
 
