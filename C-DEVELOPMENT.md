@@ -4070,3 +4070,22 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   resets the ACL to the new groups (as VolumeActivateNFS does; it changed only etcd/exports before). The change runs as the
   requester when he has the share's privilege, else as `system`. Unchanged: UnixDelGroup, log codes (VolCst01/VolCsu01,
   Unlin1104/Unlin1110), etcd formats, the Everyone guard; domain shares and iSCSI are not touched.
+* **QSD5.323, test 629 (QX-030) step 1:** `mkgroup q030g` with 30 members: the leader needed 127 s for the members and node2
+  started the group only ~450 s after the request (30 members at ~636 s; limit 120 s). Partly a regression of QSD5.318 (the
+  follower retries an exit-3 UsrChange), the serial path is older. Causes: `UnixChangeGroup` ran one full `UnixChangeUser` per
+  member (~10 python/docker spawns, ~4 s each on the leader, ~5.5 s on node2) plus `sleep 3` (`UnixAddGroup` `sleep 2`); every
+  member run filed a `sync/UsrChange` copy stamped before the group's own `sync/group` request (filed only after the loop), so
+  the follower worked ~27 copies first, each exited 3 (group missing) and was kept, and every pass re-ran them before the
+  group; the follower's group add then ran 30 `UnixChangeUser` again. Fix: `UnixChangeGroup` (create and change, members
+  given) sets the whole member list with ONE `gpasswd -M` (fallback one `gpasswd -d`/`-a` each when it is refused) and writes
+  usersigroup/<group> with one etcdput; it adds the members missing from Everyone (`gpasswd -a`, and the Everyone row on the
+  leader with one put); it files no per-member UsrChange copy (the group's own sync/group or sync/GrpChange request carries the
+  change). On a follower the member list is the LEADER's usersigroup/<group> row now (exact copy into the local etcd, the
+  leader's Everyone row copied too; the request's list only when the leader's row cannot be read); members that are not users
+  on the node yet are reported and the request exits 3 (kept by checksyncs as before). No fixed sleeps. pace `checksyncs`
+  (cluster path): after the stamp sort, the UsrChange requests that sort before the last pending group create
+  (`sync/group/UnixAddGroup_...`) are moved right after it (`groupsfirst`), so a pass makes the group first and its UsrChange
+  copies then run once instead of exiting 3 and being retried ahead of it. Not sent any more for a group change: the
+  per-member Unst1024/Unsu1024 (the group's Unst1025/Unsu1025 stay). Unchanged: log codes (Unlin1118, Unlin1122, Unlin1110),
+  etcd keys and value format, exact-name members (test 614), the Everyone guards, the NoUser (empty group) path, the
+  replication receiver path, `UnixChangeUser` for a user's own change.

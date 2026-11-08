@@ -78,7 +78,7 @@ echo 2222222222222222222222222222222222222222222222
  fi
 
 # /bin/smbpasswd -e $username
- sleep 2;
+ # (no fixed wait: useradd/groupmod have written /etc/passwd and /etc/group when they return)
  userline=`grep "^$username:" /etc/passwd`
  if [ $? -ne  0  ]; then
    docker exec etcdclient /TopStor/logmsg.py Unlin1120 error $userreq $username
@@ -88,6 +88,9 @@ echo 2222222222222222222222222222222222222222222222
   /TopStor/etcdput.py $etcd 'usersigroup/'$username $userid':'$usergd':'nogrouphome/nogroupsize'/NoUser/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no'
   #/TopStor/broadcast.py GroupAdd /TopStor/pump.sh UnixAddGroup_sync -d$myhost $username $userid $usergd $groupusers
   echo /TopStor/UnixChangeGroup $leaderip $username $groupusers $userreq create $pullsync
+  # sets the whole member list at once (gpasswd -M) and writes usersigroup/<group>; it files no per-member sync/UsrChange, so
+  # the sync/group request below (filed after the leader's row holds the members) is the only request a follower works for
+  # this group and its group sync applies the leader's member list in one go (test 629)
   /TopStor/UnixChangeGroup $leaderip $username $groupusers $userreq create $pullsync
   echo s$pullsync | grep pull
   if [ $? -eq 0 ]
