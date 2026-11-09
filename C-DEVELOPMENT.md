@@ -4134,3 +4134,14 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   imports. The leader removes `pools/`, `poolnxt/`, `pooldeleting/` keys of a pool that no node lists and the leader cannot
   import for 300 s (`cleanstale()`, state in /root/zpoolstalekeys). DGdestroyPool sets `pooldeleting/<pool>` around its
   export/import/destroy and removes `poolnxt/<pool>` after a destroy. Unchanged: log codes, take-over flow, multihost off.
+* **QSD5.328, test 634 (QX-035) step 1:** a disk the admin took offline (`pools/actionOnDisk action=offline`) was replaced by a
+  free spare within ~9 s (`zpool replace -f <pool> <offlined> <free>`), so the pool went back to ONLINE and the card to "balanced".
+  Cause (pace `selectspare.py`, not a regression): the skip for pools marked `offlinethis/<pool>` (set by actionOnDisk.py:32,
+  deleted by a successful online) was commented out; the leader optimiser left the OFFLINE disk out of the best set and queued
+  `needtoreplace` for it; the pool owner also passed the OFFLINE disk to `solvedegradedraid`; and once all was optimised
+  `dels(leaderip,'offline','--prefix')` wiped every `offlinethis/` key. Fix (pace selectspare.py `adminoffline()`): a raid with a
+  non-`dm-` disk whose zpool state is OFFLINE, or with the disk named in `offlinethis/<pool>`, is not optimised, its queued
+  `needtoreplace`/`ask/needtoreplace` key is dropped instead of run, and an OFFLINE non-`dm-` disk is not given to
+  `solvedegradedraid`. The cleanup deletes by exact name only the `offlinethis/<pool>` key of a pool that no longer exists; a
+  live pool's key stays until a successful online deletes it. Unchanged: auto-replace of FAULTED/UNAVAIL/REMOVED disks and of
+  `dm-` stubs, actionOnDisk, log codes, etcd key names.
