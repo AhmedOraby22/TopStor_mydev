@@ -77,6 +77,9 @@ echo iam in >> /root/tmp2
   echo > /etc/exports
  fi
  echo iam here2 >> /root/tmp2
+ # QSD5.327 (test 634 / 630): the pool is exported for a moment below; its standby (poolnxt/<pool>) must not import it in that
+ # window.  zpooltoimport.py imports no pool that has this marker; it is removed after the destroy.
+ ETCDCTL_API=3 /pace/etcdput.py $leaderip pooldeleting/$pool yes
  /sbin/zpool export -f $pool
  sleep 1
  # the import right after the export sometimes finds no pool ("cannot import: no such pool available") while the
@@ -102,8 +105,14 @@ echo iam in >> /root/tmp2
      /sbin/zpool labelclear -f $pd >> /root/dglabelclear 2>&1
      echo "destroyed $pool: labelclear $pd rc $?" >> /root/dglabelclear
    done
+   # QSD5.327: the standby assignment of the deleted pool goes too (it stayed for ever and the standby kept importing by name)
+   ETCDCTL_API=3 /pace/etcddel.py $leaderip poolnxt/$pool
+   stamp=`date +%s`
+   ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/poolnxt/Del_poolnxt_${pool}/request poolnxt_$stamp
+   ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/poolnxt/Del_poolnxt_${pool}/request/$leader poolnxt_$stamp
    docker exec etcdclient /TopStor/logmsg.py DGsu5 info $userreq $pool
 fi
+ETCDCTL_API=3 /pace/etcddel.py $leaderip pooldeleting/$pool
 /pace/etcddel.py $leaderip requests/DGdestroypool/$myhost $myhost/$userreq
 #systemctl restart zfs-zed
  docker exec etcdclient /TopStor/logqueue.py `basename "$0"` stop $userreq 

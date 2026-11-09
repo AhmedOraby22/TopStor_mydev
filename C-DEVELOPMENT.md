@@ -4121,3 +4121,16 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   'message':'requested layout/size not available (disks busy: pool delete in progress)'}`; layout missing with no delete pending
   -> the existing 400 "No eligible data disks ...". `useable` is converted to float (it arrived as the string "64.2"). Entries
   are dropped once the pool is gone or after 300 s. Unchanged: log codes, etcd keys, DGdestroyPool/DGsetPool.
+* **QSD5.327, test 634 (QX-035) B1 build (also b613i1, b630i1):** right after `pools/newpool` mirror on the leader the member
+  imported the leader's new pool (`zpool import <guid>`, `zpool reguid`) via `/pace/zpooltoimport.py`: one pool ONLINE on two
+  nodes (split brain). Cause: `poolnxt/<pool>` names the standby node of EVERY pool (kept while the owner is alive, for a take
+  over), and the member's only check before importing was "the pool name is in a `hosts/*/current` list". `selectimport.py` on
+  the leader sets `poolnxt/<pool>=<member>` as soon as DGsetPool wrote `pools/<pool>=<leader>`, seconds before the leader's
+  putzpool lists the pool in `hosts/<leader>/current` (a failed etcd read of that list had the same effect). Hosts have
+  hostid 0 (no /etc/hostid), so ZFS itself does not refuse the second import. Not a regression (b613i1 ran QSD5.315). Fix
+  (pace zpooltoimport.py `heldelsewhere()`): no import and no reguid while `pooldeleting/<pool>` exists, while `pools/<pool>`
+  names another node that has `ready/<node>`, or while a live node lists the pool; unreadable ready/hosts lists -> nothing
+  this round (poolnxt stays). A dead owner loses ready/, pools/ and hosts/ keys (heartbeat.py hostlost), so a take over still
+  imports. The leader removes `pools/`, `poolnxt/`, `pooldeleting/` keys of a pool that no node lists and the leader cannot
+  import for 300 s (`cleanstale()`, state in /root/zpoolstalekeys). DGdestroyPool sets `pooldeleting/<pool>` around its
+  export/import/destroy and removes `poolnxt/<pool>` after a destroy. Unchanged: log codes, take-over flow, multihost off.
