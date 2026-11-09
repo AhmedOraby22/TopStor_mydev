@@ -875,6 +875,57 @@ def hostslost():
   hid += 1
  return jsonify(losthosts)
 
+# QSD5.326, test 633 (QX-034) step 2: pools/delpool only queues DGdestroyPool on the owner and answers at once; the pool and
+# its disks stay in 'host current' for some 30-40 s (DGst5 .. DGsu5 .. putzpool).  A newpool/addtopool sent right after the
+# delete found 0 free disks, newraids() had no key for the layout and dgsinfo['newraid'][redundancy] raised KeyError -> 500.
+# delpool now remembers the pools it queued for deletion (this process only: the API runs on the leader) and the pool calls
+# wait (bounded) for those pools to leave the inventory before they compute the free layouts.
+POOLDEL_WAIT = 90                    # longest wait of one pool call for a pending delete (s)
+POOLDEL_POLL = 3                     # inventory refresh interval while waiting (s)
+POOLDEL_FORGET = 300                 # a delete still not visible after this is forgotten (failed or refused, DGfa5)
+_pooldel_pending = {}                # pool -> time its delete was queued
+_pooldel_lock = threading.Lock()
+
+def _pooldel_busy():
+ # pools whose queued delete is not finished in the current inventory (the pool or one of its disks is still listed)
+ now = timestamp()
+ with _pooldel_lock:
+  for pool, queued in list(_pooldel_pending.items()):
+   still = pool in allinfo.get('pools', {}) or any(str(d.get('pool', '')) == pool for d in allinfo.get('disks', {}).values())
+   if not still or now - queued > POOLDEL_FORGET:
+    _pooldel_pending.pop(pool, None)
+  return sorted(_pooldel_pending)
+
+def _useable(value):
+ # useable arrives as a string ("64.2") from the API clients while the size keys of newraids() are floats
+ try:
+  return float(value)
+ except (TypeError, ValueError):
+  return value
+
+def _sizeavailable(newraid, redundancy, useable):
+ return redundancy in newraid and len(newraid[redundancy]) > 0 and useable in newraid[redundancy]
+
+def _newraid_after_pooldel(redundancy, useable):
+ # newraids() of the inventory; while the exact layout/size is missing and a delete is pending, refresh and wait (bounded).
+ # Returns (newraid, busy pools); busy is not empty only when the wait ran out.
+ newraid = newraids(allinfo['disks'])
+ waited = 0
+ busy = _pooldel_busy()
+ while busy and not _sizeavailable(newraid, redundancy, useable) and waited < POOLDEL_WAIT:
+  sleep(POOLDEL_POLL)
+  waited += POOLDEL_POLL
+  getalltime('yes')
+  newraid = newraids(allinfo['disks'])
+  busy = _pooldel_busy()
+ if _sizeavailable(newraid, redundancy, useable):
+  busy = []
+ return newraid, busy
+
+def _pooldel_conflict(busy):
+ return jsonify({'response': 'error', 'pools': busy,
+                 'message': 'requested layout/size not available (disks busy: pool delete in progress)'}), 409
+
 @app.route('/api/v1/pools/dgsinfo', methods=['GET','POST'])
 @login_required
 @audit_command
@@ -905,7 +956,9 @@ def dgsdelpool(data):
  ownerip = allinfo['hosts'][data['owner']]['ipaddress']
  datastr = data['pool']+' '+data['user'] 
  cmndstring = '/TopStor/DGdestroyPool '+leaderip+' '+datastr
- postchange(cmndstring,data['owner'])
+ if postchange(cmndstring,data['owner']) == 'queued':
+  with _pooldel_lock:
+   _pooldel_pending[data['pool']] = timestamp()
 # z= cmndstring.split(' ')
 # msg={'req': 'Pumpthis', 'reply':z}
 # sendhost(ownerip, str(msg),'recvreply',myhost)
@@ -921,7 +974,13 @@ def dgsaddtopool(data):
  getalltime('yes')
  keys = []
  dgsinfo = {'raids':allinfo['raids'], 'pools':allinfo['pools'], 'disks':allinfo['disks']}
- dgsinfo['newraid'] = newraids(allinfo['disks'])
+ data['useable'] = _useable(data['useable'])
+ dgsinfo['newraid'], busy = _newraid_after_pooldel(data['redundancy'], data['useable'])
+ if busy:
+  return _pooldel_conflict(busy)
+ if not dgsinfo['newraid'].get(data['redundancy']):
+  return jsonify({'response': 'error',
+                  'message': 'No eligible data disks are available for this configuration'}), 400
  if data['useable'] not in dgsinfo['newraid'][data['redundancy']]:
   keys = list(dgsinfo['newraid'][data['redundancy']].keys())
   keys.append(float(data['useable']))
@@ -1075,7 +1134,15 @@ def dgsnewpool(data):
     else:
         keys = []
         dgsinfo = {'raids':allinfo['raids'], 'pools':allinfo['pools'], 'disks':allinfo['disks']}
-        dgsinfo['newraid'] = newraids(allinfo['disks'])
+        data['useable'] = _useable(data['useable'])
+        dgsinfo['newraid'], busy = _newraid_after_pooldel(data['redundancy'], data['useable'])
+        if busy:
+            return _pooldel_conflict(busy)
+        if not dgsinfo['newraid'].get(data['redundancy']):
+            return jsonify({
+                'response': 'error',
+                'message': 'No eligible data disks are available for this configuration'
+            }), 400
 
         if data['useable'] not in dgsinfo['newraid'][data['redundancy']]:
             keys = list(dgsinfo['newraid'][data['redundancy']].keys())

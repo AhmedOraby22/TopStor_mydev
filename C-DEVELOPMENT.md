@@ -4111,3 +4111,13 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   dropped). After 120 s still listed, or on an API error, or on a `DGfa*` notification naming the pool (NotificationPoller now
   dispatches each new notification as a window `app-notification` event), the card shows again with a red notice in the page's
   existing error style. Unchanged: API calls, poll interval, card UI and styles.
+* **QSD5.326, test 633 (QX-034) step 2:** a pool create sent < 2 s after `pools/delpool` answered failed with HTTP 500 "internal
+  error". Cause: delpool only queues DGdestroyPool on the owner and returns; the pool and its disks stay in `host current` for
+  ~30-40 s, so `newpool` (`getalltime('yes')` + `newraids()`) saw 0 free disks, `newraid` had no `raid50` key and
+  `dgsinfo['newraid'][redundancy]` raised KeyError (same lookup in `addtopool`). Fix (fapi.py, delete stays asynchronous): delpool
+  records the queued pool in `_pooldel_pending` (in-process, the API runs on the leader); newpool/addtopool, when the exact
+  layout/size is missing while such a delete is pending, refresh the inventory every 3 s for up to 90 s until the pool and its
+  disks are gone, then compute the layouts again and create as usual. Still busy after 90 s -> HTTP 409 `{'response':'error',
+  'message':'requested layout/size not available (disks busy: pool delete in progress)'}`; layout missing with no delete pending
+  -> the existing 400 "No eligible data disks ...". `useable` is converted to float (it arrived as the string "64.2"). Entries
+  are dropped once the pool is gone or after 300 s. Unchanged: log codes, etcd keys, DGdestroyPool/DGsetPool.
