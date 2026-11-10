@@ -909,14 +909,14 @@ def _sizeavailable(newraid, redundancy, useable):
 def _newraid_after_pooldel(redundancy, useable):
  # newraids() of the inventory; while the exact layout/size is missing and a delete is pending, refresh and wait (bounded).
  # Returns (newraid, busy pools); busy is not empty only when the wait ran out.
- newraid = newraids(allinfo['disks'])
+ newraid = newraids(_diskinventory())
  waited = 0
  busy = _pooldel_busy()
  while busy and not _sizeavailable(newraid, redundancy, useable) and waited < POOLDEL_WAIT:
-  sleep(POOLDEL_POLL)
+  _poolop_sleep(POOLDEL_POLL)
   waited += POOLDEL_POLL
   getalltime('yes')
-  newraid = newraids(allinfo['disks'])
+  newraid = newraids(_diskinventory())
   busy = _pooldel_busy()
  if _sizeavailable(newraid, redundancy, useable):
   busy = []
@@ -925,6 +925,65 @@ def _newraid_after_pooldel(redundancy, useable):
 def _pooldel_conflict(busy):
  return jsonify({'response': 'error', 'pools': busy,
                  'message': 'requested layout/size not available (disks busy: pool delete in progress)'}), 409
+
+# QSD5.330 (test 637 QX-038 step 3): Flask serves requests in threads; two parallel newpool calls ran the disk selection at the
+# same time (fastselect keeps its working state in module globals -> one call raised -> HTTP 500), and neither call knew the
+# disks the other had just queued (the new pool is in the inventory only after DGsetPool ran), so both could pick the same disks.
+# Now newpool/addtopool/delpool run one at a time (_poolop_lock, from the inventory refresh to postchange; released while
+# _newraid_after_pooldel sleeps), and the disks a create/add queued are left out of later selections until the inventory shows
+# them in a pool (or POOLNEW_FORGET passed: the create failed). A layout that does not fit then is a deliberate 409.
+POOLNEW_FORGET = 300                 # a queued create whose disks are still free after this is forgotten (s)
+_poolnew_pending = {}                # disk -> time a create/add with it was queued
+_poolop_lock = threading.Lock()
+_poolop_ctx = threading.local()      # .held: this thread holds _poolop_lock
+
+def _pool_serialised(f):
+ @wraps(f)
+ def decorated_function(*args, **kwargs):
+  with _poolop_lock:
+   _poolop_ctx.held = True
+   try:
+    return f(*args, **kwargs)
+   finally:
+    _poolop_ctx.held = False
+ return decorated_function
+
+def _poolop_sleep(seconds):
+ # sleep without blocking the other pool calls (the caller holds _poolop_lock)
+ if getattr(_poolop_ctx, 'held', False):
+  _poolop_lock.release()
+  try:
+   sleep(seconds)
+  finally:
+   _poolop_lock.acquire()
+ else:
+  sleep(seconds)
+
+def _poolnew_busy():
+ # disks of a queued create/add that the inventory does not show in a pool yet
+ now = timestamp()
+ disks = allinfo.get('disks', {})
+ with _pooldel_lock:
+  for disk, queued in list(_poolnew_pending.items()):
+   seen = disks.get(disk)
+   inpool = seen is not None and 'free' not in str(seen.get('raid', 'free'))
+   if inpool or now - queued > POOLNEW_FORGET:
+    _poolnew_pending.pop(disk, None)
+  return set(_poolnew_pending)
+
+def _poolnew_queued(disks):
+ with _pooldel_lock:
+  for disk in disks:
+   _poolnew_pending[disk] = timestamp()
+
+def _diskinventory():
+ # allinfo['disks'] without the disks of queued creates/adds
+ busy = _poolnew_busy()
+ return {disk: info for disk, info in allinfo['disks'].items() if disk not in busy}
+
+def _poolnew_conflict(busy):
+ return jsonify({'response': 'error', 'disks': sorted(busy),
+                 'message': 'requested layout/size not available (disks busy: pool create in progress)'}), 409
 
 @app.route('/api/v1/pools/dgsinfo', methods=['GET','POST'])
 @login_required
@@ -941,6 +1000,7 @@ def dgsinfo(data):
 @app.route('/api/v1/pools/delpool', methods=['GET','POST'])
 @login_required
 @audit_command
+@_pool_serialised
 def dgsdelpool(data):
  global allinfo, myhost
  if 'baduser' in data['response']:
@@ -967,6 +1027,7 @@ def dgsdelpool(data):
 @app.route('/api/v1/pools/addtopool', methods=['GET','POST'])
 @login_required
 @audit_command
+@_pool_serialised
 def dgsaddtopool(data):
  global allinfo, myhost, leaderip
  if 'baduser' in data['response']:
@@ -978,6 +1039,9 @@ def dgsaddtopool(data):
  dgsinfo['newraid'], busy = _newraid_after_pooldel(data['redundancy'], data['useable'])
  if busy:
   return _pooldel_conflict(busy)
+ freedisks = _diskinventory()
+ if not dgsinfo['newraid'].get(data['redundancy']) and _poolnew_busy():
+  return _poolnew_conflict(_poolnew_busy())
  if not dgsinfo['newraid'].get(data['redundancy']):
   return jsonify({'response': 'error',
                   'message': 'No eligible data disks are available for this configuration'}), 400
@@ -993,17 +1057,17 @@ def dgsaddtopool(data):
  if 'single' in data['redundancy']:
   selecteddisks = disks
  elif 'raid10' in data['redundancy']:
-  bestdisks = selectraid10(leaderip,disks,allinfo['disks'],data['pool'])
+  bestdisks = selectraid10(leaderip,disks,freedisks,data['pool'])
   if len(bestdisks) < 1:
     return jsonify(data)
   selecteddisks = bestdisks.split(',')
  elif 'raid50' in data['redundancy']:
-  bestdisks = selectraid50(leaderip,disks,allinfo['disks'],data['pool'])
+  bestdisks = selectraid50(leaderip,disks,freedisks,data['pool'])
   if len(bestdisks) < 1:
     return jsonify(data)
   selecteddisks = bestdisks.split(',')
  elif 'raid60' in data['redundancy']:
-  bestdisks = selectraid60(leaderip,disks,allinfo['disks'],data['pool'])
+  bestdisks = selectraid60(leaderip,disks,freedisks,data['pool'])
   if len(bestdisks) < 1:
     return jsonify(data)
   selecteddisks = bestdisks.split(',')
@@ -1011,7 +1075,7 @@ def dgsaddtopool(data):
   print('#########################')
   print('disks',disks)
   print('#########################')
-  bestdisks = selectdisks(leaderip,disks,allinfo['disks'],data['pool'])
+  bestdisks = selectdisks(leaderip,disks,freedisks,data['pool'])
   print('bestdisks',bestdisks)
   print('#########################')
   if len(bestdisks) < 1:
@@ -1039,7 +1103,8 @@ def dgsaddtopool(data):
  elif 'raid6' in data['redundancy']:
   datastr = 'addparity2 '+data['user']+' '+data['owner']+" "+diskstring+data['pool']
  cmndstring = '/TopStor/DGsetPool '+leaderip+' '+datastr
- postchange(cmndstring,data['owner'])
+ if postchange(cmndstring,data['owner']) == 'queued':
+  _poolnew_queued(selecteddisks)
 # z= cmndstring.split(' ')
 # msg={'req': 'Pumpthis', 'reply':z}
 # sendhost(ownerip, str(msg),'recvreply',myhost)
@@ -1116,6 +1181,7 @@ def dgsdelcachespares(data):
 @app.route('/api/v1/pools/newpool', methods=['GET','POST'])
 @login_required
 @audit_command
+@_pool_serialised
 def dgsnewpool(data):
     global allinfo, myhost, leaderip
 
@@ -1131,6 +1197,9 @@ def dgsnewpool(data):
 
     if data.get('disks'):
         selecteddisks = data['disks']
+        busy = _poolnew_busy() & set(selecteddisks)
+        if busy:
+            return _poolnew_conflict(busy)
     else:
         keys = []
         dgsinfo = {'raids':allinfo['raids'], 'pools':allinfo['pools'], 'disks':allinfo['disks']}
@@ -1138,6 +1207,9 @@ def dgsnewpool(data):
         dgsinfo['newraid'], busy = _newraid_after_pooldel(data['redundancy'], data['useable'])
         if busy:
             return _pooldel_conflict(busy)
+        freedisks = _diskinventory()
+        if not dgsinfo['newraid'].get(data['redundancy']) and _poolnew_busy():
+            return _poolnew_conflict(_poolnew_busy())
         if not dgsinfo['newraid'].get(data['redundancy']):
             return jsonify({
                 'response': 'error',
@@ -1158,7 +1230,7 @@ def dgsnewpool(data):
         if 'single' in data['redundancy']:
             selecteddisks = [disk for disk in disks if disk not in manual_cache][:1]
         elif 'raid10' in data['redundancy']:
-            bestdisks = selectraid10(leaderip, disks, allinfo['disks'], '', excluded_disks)
+            bestdisks = selectraid10(leaderip, disks, freedisks, '', excluded_disks)
             if len(bestdisks) < 1:
                 return jsonify({
                     'response': 'error',
@@ -1166,7 +1238,7 @@ def dgsnewpool(data):
                 }), 400
             selecteddisks = bestdisks.split(',')
         elif 'raid50' in data['redundancy']:
-            bestdisks = selectraid50(leaderip, disks, allinfo['disks'], '', excluded_disks)
+            bestdisks = selectraid50(leaderip, disks, freedisks, '', excluded_disks)
             if len(bestdisks) < 1:
                 return jsonify({
                     'response': 'error',
@@ -1174,7 +1246,7 @@ def dgsnewpool(data):
                 }), 400
             selecteddisks = bestdisks.split(',')
         elif 'raid60' in data['redundancy']:
-            bestdisks = selectraid60(leaderip, disks, allinfo['disks'], '', excluded_disks)
+            bestdisks = selectraid60(leaderip, disks, freedisks, '', excluded_disks)
             if len(bestdisks) < 1:
                 return jsonify({
                     'response': 'error',
@@ -1182,7 +1254,7 @@ def dgsnewpool(data):
                 }), 400
             selecteddisks = bestdisks.split(',')
         else:
-            bestdisks = selectdisks(leaderip, disks, allinfo['disks'], '', excluded_disks)
+            bestdisks = selectdisks(leaderip, disks, freedisks, '', excluded_disks)
             if len(bestdisks) < 1:
                 return jsonify({
                     'response': 'error',
@@ -1256,7 +1328,8 @@ def dgsnewpool(data):
         datastr = 'parity2 '+data['user']+' '+data['owner']+" "+diskstring+" "+cachestring+" nopool "+data['user']+" "+data['owner']
 
     cmndstring = '/TopStor/DGsetPool '+leaderip+' '+datastr+' '+data['user']
-    postchange(cmndstring, data['owner'])
+    if postchange(cmndstring, data['owner']) == 'queued':
+        _poolnew_queued(selecteddisks)
 
     return jsonify(data)
 

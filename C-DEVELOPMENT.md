@@ -4159,3 +4159,13 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   the address from the key, or just the etcd deletes, puts the sync request, logs NFS1002); other types go to their
   VolumeDelete<TYPE> on the key's host as before; an NFS key whose host is not ready is deleted by fapi; no key at all answers
   `error: novolume` (NFS1001) instead of HTTP 500.
+* **QSD5.330, test 637 (QX-038) step 3:** two parallel `pools/newpool` calls: one answered HTTP 500 (generic handler). Cause:
+  Flask serves requests in threads; both ran `fastselect.selectdisks`, which keeps its working state in module globals and
+  resets them on exit (KeyError 'diskcount' / ZeroDivisionError in the other thread), and nothing remembered the disks a create
+  had just queued (the pool is in the inventory only after DGsetPool ran), so a parallel/next create could pick the same disks.
+  Fix: fapi `_poolop_lock` (decorator `_pool_serialised`) runs newpool/addtopool/delpool one at a time from the inventory
+  refresh to postchange; the QSD5.326 pending-delete wait sleeps with the lock released (`_poolop_sleep`). The disks of a queued
+  create/add are kept in `_poolnew_pending` and left out of newraids()/the selectors (`_diskinventory`) until the inventory shows
+  them in a pool or `POOLNEW_FORGET` (300 s) passed; a layout that then does not fit answers 409 `requested layout/size not
+  available (disks busy: pool create in progress)`, manual `disks` already queued too. fastselect `selectdisks`/`optimizedisks`
+  run under a module RLock. Unchanged: log codes, etcd keys, DGsetPool command format.
