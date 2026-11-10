@@ -4145,3 +4145,17 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   `solvedegradedraid`. The cleanup deletes by exact name only the `offlinethis/<pool>` key of a pool that no longer exists; a
   live pool's key stays until a successful online deletes it. Unchanged: auto-replace of FAULTED/UNAVAIL/REMOVED disks and of
   `dm-` stubs, actionOnDisk, log codes, etcd key names.
+* **QSD5.329, test 635 (QX-036) step 3 (also 605 step 5, 606 step 3):** the bell counted 0 warnings/errors and `#/logs` showed a
+  backend Poolcap90 warning as INFO. Cause (topstorweb `src/logFilter.js` `logSeverity`): it read `importance` before `type`;
+  backend rows carry importance as a number string ("0"/"1"/"2", always truthy), so `type` was never read. Fix: the severity name
+  comes from `type`; `importance` is used only when it is itself a name (mock rows). Bell (Navbar `matchesLogSev`), the logs
+  filter and the severity column follow; toasts already used `type`.
+* **QSD5.329, test 635 (QX-036) step 1 finding:** `volumes/create` NFS with size=0G answered HTTP 200 but zfs refused
+  (`use 'none' to disable quota`); VolumeCreateNFS had written `volumes/NFS/<host>/<pool>/<name>` before checking the dataset,
+  so the leftover key held the address (a later create on it: IPadduqfa) and `volumes/volumedel` of it was a KeyError (HTTP 500,
+  allinfo drops a volume without dataset). Fix: VolumeCreateNFS treats size 0/0G/0.0M/empty as `quota=none`; when `zfs create`
+  left no dataset it deletes that key, logs NFS1006 and stops. fapi `volumedel` of a name not in allinfo goes to
+  `volumedel_leftover`: an NFS key is deleted by VolumeDeleteNFS on the key's host (which, with no dataset, runs nfsremove.sh with
+  the address from the key, or just the etcd deletes, puts the sync request, logs NFS1002); other types go to their
+  VolumeDelete<TYPE> on the key's host as before; an NFS key whose host is not ready is deleted by fapi; no key at all answers
+  `error: novolume` (NFS1001) instead of HTTP 500.

@@ -2149,6 +2149,35 @@ def volumeactive(data):
 
 
 
+# A volume that has an etcd key volumes/<TYPE>/<host>/<pool>/<name> but no dataset (allinfo drops it), e.g. the leftover of a
+# failed create (test 635: size=0G refused by zfs, the key kept the address, volumedel was a KeyError = HTTP 500).  An NFS key
+# goes to VolumeDeleteNFS on the host of the key (it removes the keys, a container/address if any, and skips the zfs destroy);
+# other types go to their VolumeDelete<TYPE> as before; an NFS key whose host is not ready is removed here.  No key at all: a
+# clean answer (error novolume, NFS1001) instead of HTTP 500.
+def volumedel_leftover(data):
+ name = str(data.get('name', ''))
+ user = data.get('user', 'system')
+ keys = [k for k in get('volumes', '--prefix') if len(str(k[0]).split('/')) >= 5 and str(k[0]).split('/')[-1] == name] if name else []
+ if not keys:
+  logmsg.sendlog('NFS1001', 'error', user, name)
+  data['error'] = 'novolume'
+  return data
+ for key in keys:
+  _, vtype, host, pool = str(key[0]).split('/')[:4]
+  data['owner'] = host
+  # the script on the key's host decides (a dataset that exists after all, allinfo not refreshed yet, is deleted as usual)
+  if postchange('/TopStor/VolumeDelete'+vtype+' '+leaderip+' '+pool+' '+name+' '+vtype+' '+user, host) != 'host is not ready' or vtype != 'NFS':
+   continue
+  logmsg.sendlog('NFS1000', 'info', user, pool+'/'+name)
+  dels(key[0])
+  for pfx in ('vol', 'replivol', 'size', 'tenant'):
+   dels(pfx, name)
+  stamp = 'volumes_'+str(int(timestamp()))
+  put(leaderip, 'sync/volumes/'+pool+'_'+name+'/request', stamp)
+  put(leaderip, 'sync/volumes/'+pool+'_'+name+'/request/'+myhost, stamp)
+  logmsg.sendlog('NFS1002', 'info', user, pool+'/'+name)
+ return data
+
 @app.route('/api/v1/volumes/volumedel', methods=['GET','POST'])
 @login_required
 @audit_command
@@ -2157,6 +2186,8 @@ def volumedel(data):
  if 'baduser' in data['response']:
   return {'response': 'baduser'}
  getalltime()
+ if data.get('name') not in allinfo['volumes']:
+  return volumedel_leftover(data)
  pool = allinfo['volumes'][data['name']]['pool']
  data['owner'] = allinfo['volumes'][data['name']]['host']
  ownerip = allinfo['hosts'][data['owner']]['ipaddress']

@@ -27,6 +27,25 @@ then
  echo etcd=$etcd
  docker exec etcdclient /TopStor/logmsg.py NFS1000 info $userreq $pDG/$volname
  docker exec etcdclient /TopStor/logqueue.py `basename "$0"` running $userreq
+ if ! /sbin/zfs list -H -o name $DG/$name >/dev/null 2>&1; then
+  # no dataset (the leftover etcd key of a failed create, test 635): remove its keys, and the address/container when the key
+  # names one (nfsremove.sh), instead of failing on zfs destroy with the key left behind
+  kval=`/pace/etcdget.py $etcd volumes --prefix | grep "/$DG/$name'" | head -1 | awk -F"', '" '{print $2}' | tr -d "')]"`
+  ipaddr=`echo "$kval" | awk -F'/' '{print $10}'`
+  ipsubnet=`echo "$kval" | awk -F'/' '{print $11}'`
+  if [ -n "$ipaddr" ] && [ -n "$ipsubnet" ]; then
+   /TopStor/nfsremove.sh $leaderip $pDG $volname $ipaddr $ipsubnet NFS 2>/root/errcifsremove
+  else
+   for pfx in vol replivol size tenant; do /TopStor/etcddel.py $leaderip $pfx $volname; done
+  fi
+  stamp=`date +%s`
+  ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/volumes/${pDG}_$name/request volumes_$stamp
+  ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/volumes/${pDG}_$name/request/$leader volumes_$stamp
+  docker exec etcdclient /TopStor/logmsg.py NFS1002 info $userreq $pDG/$volname
+  docker exec etcdclient /TopStor/etcdputlocal.py dirty/volume 0
+  docker exec etcdclient /TopStor/logqueue.py `basename "$0"` stop $userreq
+  exit
+ fi
  ipaddr=`zfs get -H ip:addr $DG/$name | awk '{print $3}'`
  ipsubnet=`zfs get -H ip:subnet $DG/$name | awk '{print $3}'`
  vtype=`zfs get -H prot:kind $DG/$name | awk '{print $3}'`
