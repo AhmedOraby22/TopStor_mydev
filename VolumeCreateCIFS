@@ -121,7 +121,8 @@ then
  if [ $? -ne 0 ];
  then
   writevtemp=`echo $writev | sed 's/\,/ /g'`
-  for grp in $writevtemp ;do  setfacl -R -m g:$grp:rwx /$DG/$name; done
+  # the group may create in the share; new files/dirs inherit group READ only (owner-only modify, sticky bit: owner-only delete/rename)
+  for grp in $writevtemp ;do  setfacl -R -m g:$grp:rwx /$DG/$name; setfacl -d -m g:$grp:r-X /$DG/$name; done
  fi
  setfacl -d -m o::--- /$DG/$name
 

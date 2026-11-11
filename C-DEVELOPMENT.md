@@ -4169,3 +4169,13 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   them in a pool or `POOLNEW_FORGET` (300 s) passed; a layout that then does not fit answers 409 `requested layout/size not
   available (disks busy: pool create in progress)`, manual `disks` already queued too. fastselect `selectdisks`/`optimizedisks`
   run under a module RLock. Unchanged: log codes, etcd keys, DGsetPool command format.
+* **QSD5.334, test 642 (QX-043) step 3:** in a group CIFS share a member could not READ a file written by another member
+  (`NT_STATUS_ACCESS_DENIED`; file `-rw-r----- qu1 root`, no entry for the share group). Cause: the scripts gave the share group
+  only an access ACL `g:<grp>:rwx` on the share directory, never a default (inherited) entry; the directory is root:root, so new
+  files got group root and the other members fell into "other". Fix: VolumeCreateCIFS adds `setfacl -d -m g:<grp>:r-X` per
+  group; VolumeChangeCIFS (both blocks) after `setfacl -b -R` sets `-R -m g:<grp>:r-X` (existing files/subdirs read only),
+  `-m g:<grp>:rwx` on the share root, `-R -d -m g:<grp>:r-X`, `-d -m o::---`, and chmod 3770 (was 2770, which dropped the sticky
+  bit). With `create mask = 0644` a new file's mask is `r--`: members read, only the owner writes; the sticky bit keeps
+  delete/rename owner-only. Everyone as group: `group:Everyone:rwx` stays on the root; going back to a group, `setfacl -b -R`
+  removes the Everyone access and default entries. VolumeActivateCIFS got the same entries (chmod 3770) but still has a
+  pre-existing syntax error (`done` at line 42) since 9170257b, so its ACL part never runs.
