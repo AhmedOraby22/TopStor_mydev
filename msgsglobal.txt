@@ -451,6 +451,7 @@ DGfa26:2: : from :: Group not added to pool : (mismatched redundancy) the pool i
 Priv1004:2: : from :: Not done, the user has no privilege for this action \: user \: :
 Priv1005:2: : from :: Privileges not changed, no such user :
 Volpool1:2: : from :: Volume not created, the pool does not exist or was not chosen : volume :
+Volnam01:2: : from :: Volume : not created, the name must be 1 to 32 letters, digits, _ or - and start with a letter or digit
 ISCSI1000:1: : from :: Deleting iSCSI volume :
 ISCSI1001:2: : from :: Problem occurred while deleting iSCSI volume :
 ISCSI1002:1: : from :: Success deleting iSCSI volume :

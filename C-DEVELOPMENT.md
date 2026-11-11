@@ -4179,3 +4179,11 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   delete/rename owner-only. Everyone as group: `group:Everyone:rwx` stays on the root; going back to a group, `setfacl -b -R`
   removes the Everyone access and default entries. VolumeActivateCIFS got the same entries (chmod 3770) but still has a
   pre-existing syntax error (`done` at line 42) since 9170257b, so its ACL part never runs.
+
+* **QSD5.338, test 647 (QX-048) step 2:** `volumes/create` had no name rule: `q048;x`, `q048/x`, `-q048`, `q048..x` and a 1001-character
+  name answered HTTP 200 (`-q048` and `q048..x` were created, the others failed late in the script with NFS1006). New `volvalid.py`
+  (as `uservalid.py`): 1-32 letters, digits, `_` or `-`, first a letter or digit. fapi `volumecreate` checks the raw name (before
+  `login_required` drops blanks) for every type (CIFS, CIFSdom, NFS, ISCSI, HOME, S3) and answers HTTP 400 `error: invalidname` with
+  `invalid character in volume name ...` or `parameter too long (max 32) ...`, log message `Volnam01`, nothing queued. The existing
+  IP/name checks (IPaddrfa/IPadduqfa/IPnamuqfa) now answer HTTP 400 with the reason instead of 200. VolumeCreate* quote "$DG/$name"
+  in `zfs create`; topstorweb create forms use the same rule (`src/utils/volumeRules.js`).

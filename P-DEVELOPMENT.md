@@ -3422,3 +3422,11 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   device before `zfs destroy`. The API stays asynchronous (the failure is reported by the ISCSI1001 notification, as before).
 
 * **QSD5.315, test 610 (QX-011) step 2:** `uservalid.py` `PASS_MIN` 4 -> 3 and `topstorweb/src/utils/userRules.js` `USER_PASS_MIN = 3` (user decision 2026-10-29: minimum 3 characters; supersedes the 3 -> 4 change above). `abc` is accepted, `ab` refused ("shorter than 3 characters"); covers fapi.py UnixAddUser, the UnixAddUser script (bulk upload) and Hostconfig.py change-password; matches msgsglobal.txt Unlin1027pw and the Navbar change-password check (>= 3).
+
+* **QSD5.338, test 647 (QX-048) step 2:** `volumes/create` had no name rule: `q048;x`, `q048/x`, `-q048`, `q048..x` and a 1001-character
+  name answered HTTP 200 (`-q048` and `q048..x` were created, the others failed late in the script with NFS1006). New `volvalid.py`
+  (as `uservalid.py`): 1-32 letters, digits, `_` or `-`, first a letter or digit. fapi `volumecreate` checks the raw name (before
+  `login_required` drops blanks) for every type (CIFS, CIFSdom, NFS, ISCSI, HOME, S3) and answers HTTP 400 `error: invalidname` with
+  `invalid character in volume name ...` or `parameter too long (max 32) ...`, log message `Volnam01`, nothing queued. The existing
+  IP/name checks (IPaddrfa/IPadduqfa/IPnamuqfa) now answer HTTP 400 with the reason instead of 200. VolumeCreate* quote "$DG/$name"
+  in `zfs create`; topstorweb create forms use the same rule (`src/utils/volumeRules.js`).

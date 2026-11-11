@@ -15,6 +15,7 @@ import Hostsconfig
 from Hostconfig import config
 from allphysicalinfo import getall, initallphy
 from uservalid import check_new_user_coded, logname
+from volvalid import check_volname_coded, logname as vollogname
 from UnixChkUser import setlogin
 import sqlite3
 from etcdget2 import etcdgetjson
@@ -1853,18 +1854,30 @@ def volumecreate(data):
  if 'baduser' in data['response']:
   return {'response': 'baduser'}
  datastr = ''
+ # the name as it was sent (login_required removes blanks, so 'q 1' would pass as 'q1'): volvalid.py, HTTP 400 and
+ # nothing queued for a name the scripts cannot carry (test 647 QX-048 step 2)
+ rawname = request.args.get('name', data.get('name'))
+ code, reason = check_volname_coded(rawname)
+ if reason:
+  logmsg.sendlog(code,'error',data.get('user','system'),vollogname(rawname))
+  return jsonify({'response': 'error', 'error': 'invalidname', 'name': vollogname(rawname), 'message': reason}), 400
  datatype = ip_context(data['type'], data.get('domname',''))
  isvu =  int(is_valid_ip(data['ipaddress']))+int(is_unique_ip(data['ipaddress'],datatype))+int(is_unique_name(data['name'], vols=False))
  if isvu == 0:
     print('ip is valid')
  else:
-    if isvu < 100:
-        logmsg.sendlog('IPaddrfa','error','system',loggedusers[data['token']]['user'])
-    elif isvu > 10 and isvu < 120: 
-        logmsg.sendlog('IPadduqfa','error','system',loggedusers[data['token']]['user'])
+    # refused: HTTP 400 with the reason (it answered 200 with the echoed request, only the log said why)
+    # is_valid_ip gives 10, is_unique_ip 100, is_unique_name 1000
+    if isvu % 100 >= 10:
+        logmsg.sendlog('IPaddrfa','error','system',data.get('user','system'))
+        err, msg = 'invalidip', 'invalid IP address in the request: '+str(data['ipaddress'])
+    elif isvu % 1000 >= 100:
+        logmsg.sendlog('IPadduqfa','error','system',data.get('user','system'))
+        err, msg = 'ipinuse', 'the IP address is already in use: '+str(data['ipaddress'])
     else:
-        logmsg.sendlog('IPnamuqfa','error','system',loggedusers[data['token']]['user'])
-    return data
+        logmsg.sendlog('IPnamuqfa','error','system',data.get('user','system'))
+        err, msg = 'nameinuse', 'the name is already in use by a user or a group: '+str(data['name'])
+    return jsonify({'response': 'error', 'error': err, 'message': msg}), 400
  getalltime()
  if data.get('pool') not in allinfo['pools']:
   # no pool chosen / unknown pool: a clean answer instead of a KeyError (HTTP 500)

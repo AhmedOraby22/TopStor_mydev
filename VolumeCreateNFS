@@ -72,7 +72,7 @@ then
   docker exec etcdclient /TopStor/logmsg.py NFS1004 info  $userreq $name
  fi
  cd /TopStor
- /sbin/zfs create -o overlay=on -o acltype=posixacl -o aclinherit=passthrough -o xattr=sa -o atime=off -o redundant_metadata=most -o quota=$quota -o dedup=$zdedup -o compression=$zcomp  $DG/$name
+ /sbin/zfs create -o overlay=on -o acltype=posixacl -o aclinherit=passthrough -o xattr=sa -o atime=off -o redundant_metadata=most -o quota=$quota -o dedup=$zdedup -o compression=$zcomp  "$DG/$name"
  if ! /sbin/zfs list -H -o name $DG/$name >/dev/null 2>&1;
  then
   # the create failed (bad size, pool full, ...): no etcd key may be left (it kept the address and could not be deleted, test 635)
