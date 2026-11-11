@@ -4187,3 +4187,14 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   `invalid character in volume name ...` or `parameter too long (max 32) ...`, log message `Volnam01`, nothing queued. The existing
   IP/name checks (IPaddrfa/IPadduqfa/IPnamuqfa) now answer HTTP 400 with the reason instead of 200. VolumeCreate* quote "$DG/$name"
   in `zfs create`; topstorweb create forms use the same rule (`src/utils/volumeRules.js`).
+
+* **QSD5.339, test 649 (QX-050) steps 1 and 4:** a domain CIFS share (`CIFSdom`) on a pool owned by a FOLLOWER was never activated:
+  `VolumeCreateCIFSdom` wrote the record to the leader's etcd only and sent no `sync/volumes` request; `VolumeActivateCIFSdom` read the
+  follower's local etcd (`_1`) and left at "No Volumes" (no smb file, no `membersmb` container, no join) and the create still logged
+  `NFS1007`. Now the create sends the two sync requests (as `VolumeCreateCIFS`); `VolumeActivateCIFSdom` waits up to ~20 s for a named
+  volume in the local etcd and then reads the leader's etcd (also handed to `cifs.py` and used for the registry); `cifs.py` reads the
+  leader's etcd when the local one lacks the volume. For a domain share `cifs.py` waits for `net ads testjoin` (up to ~3 min; a join that
+  still fails once the image's entrypoint is done is a failure) and writes `joined|nojoin|nocontainer|notmounted|ipinuse` to
+  `/TopStordata/cifsdomjoin.<address>`. A create that is not `joined` logs `CIFS1034` (join failed: wrong administrator/password) or
+  `CIFS1003` instead of `NFS1007` and leaves nothing behind: `cifsremove.sh` (container and address), the etcd record, the dataset.
+  The leader-owned path reads the leader's etcd as before.
