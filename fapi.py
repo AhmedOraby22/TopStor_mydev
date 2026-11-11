@@ -1024,6 +1024,48 @@ def dgsdelpool(data):
 # sendhost(ownerip, str(msg),'recvreply',myhost)
  return jsonify(data)
 
+# QSD5.332: the vdev type a redundancy of addtopool adds ('raid6plus' before 'raid6', 'raid60'/'raid50' share their prefix);
+# None = not known here (the request goes on as before)
+def _addlayout(redundancy):
+ r = str(redundancy)
+ if 'volset' in r or 'single' in r:
+  return 'stripe'
+ if 'mirror' in r or 'raid10' in r:
+  return 'mirror'
+ if 'raid6plus' in r:
+  return 'raidz3'
+ if 'raid6' in r:
+  return 'raidz2'
+ if 'raid5' in r:
+  return 'raidz1'
+ return None
+
+# the vdev types of a pool's data groups (allinfo['pools'][pool]['raids'] is in zpool status order: the data groups come
+# before the logs/cache/spares/special/dedup sections, whose own mirrors are not data groups). Empty = not known.
+def _pooldatalayouts(poolinfo):
+ layouts = []
+ if not poolinfo:
+  return layouts
+ for raid in poolinfo.get('raids', []):
+  name = str(raid)
+  if name.startswith(('log', 'cache', 'spare', 'special', 'dedup')):
+   break
+  if name.startswith('mirror'):
+   layout = 'mirror'
+  elif name.startswith('raidz3'):
+   layout = 'raidz3'
+  elif name.startswith('raidz2'):
+   layout = 'raidz2'
+  elif name.startswith('raidz'):
+   layout = 'raidz1'
+  elif name.startswith('stripe'):
+   layout = 'stripe'
+  else:
+   continue
+  if layout not in layouts:
+   layouts.append(layout)
+ return layouts
+
 @app.route('/api/v1/pools/addtopool', methods=['GET','POST'])
 @login_required
 @audit_command
@@ -1035,6 +1077,18 @@ def dgsaddtopool(data):
  getalltime('yes')
  keys = []
  dgsinfo = {'raids':allinfo['raids'], 'pools':allinfo['pools'], 'disks':allinfo['disks']}
+ # QSD5.332 (test 639 QX-040 step 4): the requested group must have the layout of the pool's data groups; a single/volset
+ # (stripe) group on a mirror/raidz pool removed its redundancy (volset: zpool add -f) or crashed (single: HTTP 500)
+ wanted = _addlayout(data['redundancy'])
+ poollayouts = _pooldatalayouts(dgsinfo['pools'].get(data['pool']))
+ if wanted and poollayouts and wanted not in poollayouts:
+  poollayout = '+'.join(poollayouts)
+  requested = data['redundancy']+'('+wanted+')'
+  logmsg.sendlog('DGfa26','error',data['user'],data['pool'],poollayout,requested)
+  return jsonify({'response': 'error', 'error': 'mismatchedredundancy', 'pool': data['pool'], 'poollayout': poollayout,
+                  'requested': data['redundancy'],
+                  'message': 'mismatched redundancy: pool '+data['pool']+' is '+poollayout+', the requested '+requested
+                             +' group does not match its layout; group not added'}), 400
  data['useable'] = _useable(data['useable'])
  dgsinfo['newraid'], busy = _newraid_after_pooldel(data['redundancy'], data['useable'])
  if busy:
@@ -1102,6 +1156,10 @@ def dgsaddtopool(data):
   datastr = 'addraid60w'+str(raidwidthof('raid60',selecteddisks,allinfo['disks']))+' '+data['user']+' '+data['owner']+" "+diskstring+data['pool']
  elif 'raid6' in data['redundancy']:
   datastr = 'addparity2 '+data['user']+' '+data['owner']+" "+diskstring+data['pool']
+ else:
+  # no add command for this layout (e.g. 'single'): a deliberate 400, never an unhandled 500
+  return jsonify({'response': 'error', 'error': 'unsupportedredundancy', 'requested': data['redundancy'],
+                  'message': 'unsupported redundancy for adding to a pool: '+str(data['redundancy'])}), 400
  cmndstring = '/TopStor/DGsetPool '+leaderip+' '+datastr
  if postchange(cmndstring,data['owner']) == 'queued':
   _poolnew_queued(selecteddisks)

@@ -446,6 +446,7 @@ DGst24:1: : from :: Creating RAID10 pool : using mirror pairs of disks : ......
 DGsu24:2: : from :: Success creating RAID10 pool : using mirror pairs of disks :
 DGfa24:2: : from :: Failed creating RAID10 pool : using mirror pairs of disks :
 DGfa25:2: : from :: Pool not deleted, it still has volumes (delete them first) :
+DGfa26:2: : from :: Group not added to pool : (mismatched redundancy) the pool is : and the requested group is :
 Priv1004:2: : from :: Not done, the user has no privilege for this action \: user \: :
 Priv1005:2: : from :: Privileges not changed, no such user :
 Volpool1:2: : from :: Volume not created, the pool does not exist or was not chosen : volume :
