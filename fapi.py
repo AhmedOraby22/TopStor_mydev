@@ -1998,6 +1998,20 @@ def usersauth(data):
  postchange(cmndstring)
  return data
 
+# QSD5.336 (test 645 QX-046 step 5): a quota sent to volumes/config, as the zfs size VolumeChange<type> applies: a number with
+# K/M/G/T (a bare number is GB, the unit of the volume record and of volumesinfo), 0 or none = no quota (as VolumeCreateNFS).
+# None = not a valid quota.
+QUOTA_RE = re.compile(r'^\s*(none|[0-9]+(?:\.[0-9]+)?)\s*(?:([KMGT])(?:I?B)?)?\s*$', re.IGNORECASE)
+def _quotaarg(value):
+ m = QUOTA_RE.match(str(value))
+ if not m:
+  return None
+ if m.group(1).lower() == 'none':
+  return None if m.group(2) else 'none'
+ if float(m.group(1)) == 0:
+  return 'none'
+ return m.group(1)+(m.group(2) or 'G').upper()
+
 @app.route('/api/v1/volumes/config', methods=['GET','POST'])
 @login_required
 @audit_command
@@ -2007,6 +2021,16 @@ def volumeconfig(data):
   return {'response': 'baduser'}
  getalltime()
  volume = allinfo['volumes'][data['volume']]
+ # QSD5.336: $4 of VolumeChange<type> is the quota. Not sent: the stored GB number (e.g. 1.0, no unit) as before, which the
+ # scripts leave alone. Sent: checked here (HTTP 400 if bad) and passed with its unit or as none, which the scripts apply.
+ quotaarg = str(volume['quota'])
+ if 'quota' in data and 'ISCSI' not in str(data.get('type', '')):
+  quotaarg = _quotaarg(data['quota'])
+  if quotaarg is None:
+   return jsonify({'response': 'error', 'error': 'badquota', 'volume': data['volume'], 'quota': str(data['quota']),
+                   'message': 'invalid quota '+str(data['quota'])+': use a size such as 2G, 500M or 1.5T (K/M/G/T; a bare'
+                              +' number is GB) or 0/none for no quota; volume not changed'}), 400
+  data['quota'] = quotaarg
  data['owner'] = volume['host']
  if 'ipaddress' not in data:
    data['ipaddress'] = volume['ipaddress']
@@ -2048,8 +2072,9 @@ def volumeconfig(data):
   if 'groups' in data:
    data['groups'] = only_everyone(data['groups'])
   for ele in data:
-   volume[ele] = data[ele] 
-  datastr = volume['pool']+' '+volume['name']+' '+str(volume['quota'])+' '+volume['groups']+' '+volume['ipaddress']+' '+str(volume['Subnet'])+' '+volume['statusmount']+' '+volume['host']+' '+volume['user']
+   if ele != 'quota':   # the record's quota stays the GB number from zfs (putzpool), not the request's '2G'
+    volume[ele] = data[ele]
+  datastr = volume['pool']+' '+volume['name']+' '+quotaarg+' '+volume['groups']+' '+volume['ipaddress']+' '+str(volume['Subnet'])+' '+volume['statusmount']+' '+volume['host']+' '+volume['user']
   print('33333333333333333333333333333333333333333333333#############################')
   print('volume',volume)
   print('owner',ownerip)

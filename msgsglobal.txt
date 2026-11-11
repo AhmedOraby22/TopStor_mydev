@@ -340,6 +340,7 @@ Replivol1000:0: : from :: Receiving new snapshot for volume : from partner :
 Replidf1000:0: : from :: Receiving new Snapshot for volume : from partner :
 VolCst01:1: : from ::  Start changing volume : access properties
 VolCsu01:1: : from ::  Success changing volume : access properties
+VolCfa01:2: : from :: Volume : not changed, the quota : was refused
 Volrst01:1: : from ::  Start try to delete volume : 
 NFS1000:1: : from ::  Deleting volume :
 NFS1001:1: : from :: Problem occurred while deleting volume :
