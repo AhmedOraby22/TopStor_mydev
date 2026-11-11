@@ -48,11 +48,34 @@ then
   for grp in `echo $writev | sed 's/,/ /g'`; do setfacl -m g:$grp:rwx /$DG/$name; done
  fi
  docker rm -f NFS-$oldipaddr
- echo $older | grep -w $ipaddr/$ipsubnet
- if [ $? -ne 0 ];
- then 
-  echo /TopStor/VolumeActivateNFS vol=$name user=$userreq
+ # test 638 step 3: an address change left the old address in cmynode/bond0 and the new container waited for the next
+ # VolumeCheck pass (~49 s). Free the old address unless another volume still uses it (nfsnew.py serves all NFS volumes of
+ # one address from one container: rebuild that container without this volume), then start the new container now.
+ # In the background, output to /dev/null: the caller does not wait for nfsnew.sh. Running it twice is harmless
+ # (VolumeDockerChange.py and nfsnew.sh both remove before they add).
+ myhostip=`/pace/etcdget.py $leaderip ready/$myhost`
+ oldusers=''
+ if [ -n "$oldipaddr" -a "$oldipaddr" != '-' -a "$oldipaddr" != "$ipaddr" ];
+ then
+  oldusers=`/pace/etcdget.py $leaderip volumes "/$oldipaddr/" | grep "^('volumes/" | grep "/active')" | grep -v "/$DG/$name',"`
  fi
+ oldnfs=`echo "$oldusers" | grep "^('volumes/NFS/$myhost/" | head -1 | awk -F"'" '{print $2}'`
+ (
+  if [ -n "$oldipaddr" -a "$oldipaddr" != '-' -a "$oldipaddr" != "$ipaddr" ];
+  then
+   if [ -z "$oldusers" ];
+   then
+    /TopStor/VolumeDockerChange.py $oldipaddr $oldipsubnet NFS
+   elif [ -n "$oldnfs" ];
+   then
+    /TopStor/nfsnew.py $leader $leaderip $myhost $myhostip $leaderip `echo $oldnfs | awk -F'/' '{print $4" "$5}'` $oldipaddr $oldipsubnet NFS
+   fi
+  fi
+  if [ "$active" = 'active' ];
+  then
+   /TopStor/nfsnew.py $leader $leaderip $myhost $myhostip $leaderip $DG $name $ipaddr $ipsubnet NFS
+  fi
+ ) </dev/null >/dev/null 2>&1 &
  docker exec etcdclient /TopStor/logmsg.py VolCsu01 info $userreq $name
 fi;
  /pace/putzpool.py &
