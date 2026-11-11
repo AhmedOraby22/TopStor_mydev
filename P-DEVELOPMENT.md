@@ -3441,3 +3441,18 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   `/TopStordata/cifsdomjoin.<address>`. A create that is not `joined` logs `CIFS1034` (join failed: wrong administrator/password) or
   `CIFS1003` instead of `NFS1007` and leaves nothing behind: `cifsremove.sh` (container and address), the etcd record, the dataset.
   The leader-owned path reads the leader's etcd as before.
+
+* **QSD5.340, test 650 (QX-051) steps 4-6 and 8:** `volumes/config type=ISCSI` (initiators, portal port, address) answered 200 and
+  changed nothing: fapi sends `VolumeChangeISCSI <leaderip> <pool> <name> <quota> <ip> <subnet> <port> <initiators> <chapuser>
+  <chappas> <statusmount> <user> <owner> <user>` but the script read it without the leaderip slot (`pDG`=leader address,
+  `userreq`=`active`), `privthis.sh` refused and no message was written. Now the script reads leaderip first (as
+  VolumeChangeNFS/CIFS/HOME) and applies the change on the pool owner without deleting the backstore (the LUN keeps its number, the
+  initiators that stay keep their sessions): a requested initiator gets a node ACL with a mapped LUN of the volume (lowest free
+  mapped_lun, 0 for a new ACL); an initiator taken off loses its mapped LUN of the volume, and the whole ACL when nothing else is
+  mapped (LIO closes its sessions, a later login is refused); `This_lun_is_not_mapped` = no initiator. The target portal becomes
+  `<ip>:<port>` (another portal stays only while another iSCSI volume of the address uses it); an address change moves the LUN to the
+  target of the new address (old target and address removed when empty). LIO is checked afterwards (ACLs mapping the LUN == the
+  list, portal present); then the leader etcd record (volumesinfo) with the sync requests, zfs properties, the pool file,
+  `VolCst01`/`VolCsu01`. Refused or failed (privilege, bad address/port/initiator, target mismatch): new `VolCfa02` (error), no
+  `VolCsu01`. `/root/volchange` and `/root/addzfsvol` mask the CHAP secret. `pace/addzfsvolumeastarget.sh`: one TPG LUN per
+  backstore, no ACL for `This_lun_is_not_mapped`, lowest free mapped_lun.
