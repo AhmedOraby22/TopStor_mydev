@@ -11,9 +11,8 @@ ipaddr=`echo $@ | awk '{print $3}'`
 ipsubnet=`echo $@ | awk '{print $4}'`
 vtype=`echo $@ | awk '{print $5}'`
 #docker rm -f $resname
-nmcli conn mod cmynode -ipv4.addresses ${ipaddr}/$ipsubnet
-nmcli conn mod cmynode +ipv4.addresses ${ipaddr}/$ipsubnet
-nmcli conn up cmynode
+# QSD5.337 (test 646): share address live via shareaddr.sh, no "nmcli conn up cmynode" (bond0 re-activation drops every address)
+/TopStor/shareaddr.sh add $ipaddr $ipsubnet
 enpdev='enp0s8'
 portalport=`echo $@ | awk '{print $6}'`
 targetiqn=`echo $@ | awk '{print $7}'`

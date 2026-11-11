@@ -36,6 +36,20 @@ then
    exit 1
   fi
  fi
+ # QSD5.337 (test 646 QX-047 step 3): this script is the only actor on the old and the new address until its background
+ # rebuild below has finished. The VolumeCheck pass (pace/VolumeCheck.py nfsnew) saw the new address active without a container
+ # and rebuilt the same container in parallel (each rebuild re-activated bond0 then). Both addresses are locked here, before
+ # zfs/etcd change (/tmp/shareaddr.<ip>.lock, the lock of nfsnew.sh and VolumeCheck.py); VolumeCheck skips a locked address
+ # and nfsnew.sh started from here does not lock again (SHAREADDR_LOCK). Only the background block keeps the locks (fd 8/9).
+ lockold=`/sbin/zfs get -H ip:addr $DG/$name | awk '{print $3}'`
+ exec 9>/tmp/shareaddr.$ipaddr.lock
+ flock -w 60 9
+ if [ -n "$lockold" -a "$lockold" != '-' -a "$lockold" != "$ipaddr" ];
+ then
+  exec 8>/tmp/shareaddr.$lockold.lock
+  flock -w 60 8
+ fi
+ export SHAREADDR_LOCK="$ipaddr $lockold"
  older=`/pace/etcdget.py $leaderip volumes $name `
  oct1=`echo $ipaddr | awk -F'.' '{print $1}'`
  oct2=`echo $ipaddr | awk -F'.' '{print $2}'`
@@ -64,8 +78,8 @@ then
  # test 638 step 3: an address change left the old address in cmynode/bond0 and the new container waited for the next
  # VolumeCheck pass (~49 s). Free the old address unless another volume still uses it (nfsnew.py serves all NFS volumes of
  # one address from one container: rebuild that container without this volume), then start the new container now.
- # In the background, output to /dev/null: the caller does not wait for nfsnew.sh. Running it twice is harmless
- # (VolumeDockerChange.py and nfsnew.sh both remove before they add).
+ # In the background, output to /dev/null: the caller does not wait for nfsnew.sh. The address locks taken above stay held
+ # by the background block until it ends (VolumeCheck does not rebuild the same container meanwhile).
  myhostip=`/pace/etcdget.py $leaderip ready/$myhost`
  oldusers=''
  if [ -n "$oldipaddr" -a "$oldipaddr" != '-' -a "$oldipaddr" != "$ipaddr" ];
@@ -89,6 +103,7 @@ then
    /TopStor/nfsnew.py $leader $leaderip $myhost $myhostip $leaderip $DG $name $ipaddr $ipsubnet NFS
   fi
  ) </dev/null >/dev/null 2>&1 &
+ exec 9>&- 8>&-
  docker exec etcdclient /TopStor/logmsg.py VolCsu01 info $userreq $name
 fi;
  /pace/putzpool.py &

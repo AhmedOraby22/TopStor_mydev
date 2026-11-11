@@ -47,8 +47,8 @@ grep start /TopStordata/smb.$volip | grep -q only
 if [ $? -ne 0 ]
 then 
   [ -n "$resname" ] && docker rm -f $resname
-  nmcli conn mod cmynode -ipv4.addresses $volip 
-  nmcli conn up cmynode
+  # QSD5.337 (test 646): share address live via shareaddr.sh, no "nmcli conn up cmynode" (bond0 re-activation drops every address)
+  /TopStor/shareaddr.sh del $volip
   rm -rf /TopStordata/smb.$volip;
   echo `date +%T` last share of $volip: container and address removed >> $log
 else
