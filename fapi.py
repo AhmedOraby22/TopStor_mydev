@@ -449,7 +449,7 @@ def record_command(data, endpoint, method, commands=None):
   for k in data:
    if k in excluded:
     continue
-   if 'pass' in k.lower():
+   if 'pass' in k.lower() or k.lower() in CHAP_SECRETS:   # chappas has no 'pass' in it (test 653)
     continue
    params[k] = data[k]
   entry = {
@@ -1579,6 +1579,8 @@ def volumesinfo(prot='all'):
       volgrps.append(group[1])
    volumes.append(deepcopy(allinfo['volumes'][volume]))
    volumes[-1]['groups'] = deepcopy(volgrps)
+   if 'chappas' in volumes[-1]:   # the iSCSI CHAP secret is in no answer (test 653 QX-054)
+    volumes[-1]['chappas'] = chap_shown(volumes[-1]['chappas'])
  return volumes
 
 
@@ -1843,6 +1845,113 @@ def volumesnapshotscreate(data):
  return data
 
 
+# iSCSI CHAP (QSD5.341, test 653 QX-054): volumes/create and volumes/config replaced the request's chapuser/chappas with one
+# built-in pair, the same on every installation, and returned it in the answer; the scripts set it on the TPG only, with
+# authentication=0, so CHAP was never asked. Now the requested pair is checked here (HTTP 400, nothing queued, when bad), the
+# secret goes on encrypted (encthis.sh, as the CIFS domain password; the clear secret is decrypted only by
+# /pace/iscsichap.sh, which writes it to the node ACLs in configfs) and no answer, trace or command log carries it.
+# 'nochap' = no CHAP (no chapuser/chappas in the request); 'clearchap' (volumes/config chapuser=nochap) removes it.
+CHAP_NONE = 'nochap'
+CHAP_CLEAR = 'clearchap'
+CHAP_SECRETS = ('chappas',)     # request keys never echoed nor written to cmdaudit.log
+_CHAPUSER_CHARS = re.compile(r'[A-Za-z0-9._:-]*')      # fullmatch: '$' would let a final newline in
+_CHAPPAS_CHARS = re.compile(r'[A-Za-z0-9._:@!-]*')
+
+def chap_raw(data, key):
+ # the value as it was sent: login_required removes blanks, so a secret with a blank must be refused, not shortened
+ val = request.args.get(key)
+ if val is None:
+  val = data.get(key)
+ return None if val is None else str(val)
+
+def chap_check(user, secret):
+ # None when good, else the message of the HTTP 400 (it never contains the secret)
+ if user is not None:
+  if not _CHAPUSER_CHARS.fullmatch(user):
+   return 'invalid character in chapuser: use letters, digits and . _ : - (1 to 64 characters); nothing changed'
+  if not 1 <= len(user) <= 64:
+   return 'chapuser must be 1 to 64 characters (letters, digits and . _ : -); nothing changed'
+ if secret is not None:
+  if not _CHAPPAS_CHARS.fullmatch(secret):
+   return 'invalid character in chappas: use letters, digits and . _ : @ ! - (12 to 16 characters); nothing changed'
+  if not 12 <= len(secret) <= 16:
+   return 'chappas must be 12 to 16 characters (letters, digits and . _ : @ ! -); nothing changed'
+ return None
+
+def chap_encrypt(user, secret):
+ # the secret on stdin, not on the command line (ps, the cmdaudit command list); '/' cannot be in a '/' separated record
+ try:
+  out = subprocess.run(['/TopStor/encthis.sh', user, '-'], input=(secret+'\n').encode(), stdout=subprocess.PIPE,
+                       stderr=subprocess.DEVNULL).stdout.decode()
+  enc = out.split('_result')[1].strip()
+ except Exception:
+  return None
+ if not enc or not re.fullmatch(r'[A-Za-z0-9+/=]+', enc):
+  return None
+ return 'chapenc_'+enc.replace('/','@@sep')
+
+def chap_refuse(message, err='invalidchap'):
+ return jsonify({'response': 'error', 'error': err, 'message': message}), 400
+
+def chap_hide(data):
+ for k in CHAP_SECRETS:
+  if k in data:
+   data[k] = '***'
+
+def chap_shown(token):
+ # what an answer shows of a stored secret
+ return '' if str(token) in ('', CHAP_NONE, CHAP_CLEAR, 'None') else '***'
+
+# (chapuser, chappas token) for volumes/create, or (None, message) when refused
+def chap_create(data):
+ user, secret = chap_raw(data, 'chapuser'), chap_raw(data, 'chappas')
+ if user == '':
+  user = None
+ if secret == '':
+  secret = None
+ if user == CHAP_NONE and secret is None:
+  user = None
+ if user is None and secret is None:
+  return CHAP_NONE, CHAP_NONE
+ msg = chap_check(user, secret)
+ if msg:
+  return None, msg
+ if user is None or secret is None or user == CHAP_NONE:
+  return None, 'chapuser and chappas are given together (or neither, for no CHAP); nothing changed'
+ token = chap_encrypt(user, secret)
+ if token is None:
+  return None, 'the CHAP secret could not be stored; nothing changed'
+ return user, token
+
+# the same for volumes/config: what is not sent stays as it is; chapuser=nochap removes CHAP
+def chap_config(data, volume):
+ curuser, curtoken = str(volume.get('chapuser', CHAP_NONE)), str(volume.get('chappas', CHAP_NONE))
+ user, secret = chap_raw(data, 'chapuser'), chap_raw(data, 'chappas')
+ if user == '':
+  user = None
+ if secret == '':
+  secret = None
+ if user is None and secret is None:
+  return curuser, curtoken
+ if user == CHAP_NONE and secret is None:
+  return CHAP_NONE, CHAP_CLEAR
+ msg = chap_check(user, secret)
+ if msg:
+  return None, msg
+ if user == CHAP_NONE:
+  return None, 'chapuser=nochap removes CHAP and takes no chappas; nothing changed'
+ if secret is None:
+  if user == curuser and curtoken.startswith('chapenc_'):
+   return curuser, curtoken
+  return None, 'a new chapuser needs its chappas; nothing changed'
+ if user is None:
+  if curuser in ('', CHAP_NONE, 'None') or chap_check(curuser, None):
+   return None, 'chappas needs a chapuser (the volume has none); nothing changed'
+  user = curuser
+ token = chap_encrypt(user, secret)
+ if token is None:
+  return None, 'the CHAP secret could not be stored; nothing changed'
+ return user, token
 
 
 
@@ -1861,6 +1970,14 @@ def volumecreate(data):
  if reason:
   logmsg.sendlog(code,'error',data.get('user','system'),vollogname(rawname))
   return jsonify({'response': 'error', 'error': 'invalidname', 'name': vollogname(rawname), 'message': reason}), 400
+ # iSCSI CHAP: checked before anything is done; the secret is kept only encrypted (chaptoken), no answer shows it
+ if 'ISCSI' in str(data.get('type', '')):
+  chapuser, chaptoken = chap_create(data)
+  chap_hide(data)
+  if chapuser is None:
+   return chap_refuse(chaptoken)
+ else:
+  chap_hide(data)
  datatype = ip_context(data['type'], data.get('domname',''))
  isvu =  int(is_valid_ip(data['ipaddress']))+int(is_unique_ip(data['ipaddress'],datatype))+int(is_unique_name(data['name'], vols=False))
  if isvu == 0:
@@ -1888,10 +2005,14 @@ def volumecreate(data):
  data['owner'] = allinfo['hosts'][allinfo['pools'][data['pool']]['host']]['name']
  if 'groups' in data:
   data['groups'] = only_everyone(data['groups'])
+ chapmask = None
  if 'ISCSI' in data['type']:
-  data['chapuser']='MoatazNegm'
-  data['chappas']='MezoAdmin'
-  datastr = data['pool']+' '+data['name']+' '+data['size']+' '+data['ipaddress']+' '+data['Subnet']+' '+data['portalport']+' '+data['initiators']+' '+data['chapuser']+' '+data['chappas']+' '+data['active']+' '+data['user']+' '+data['owner']+' '+data['user']
+  # the requested CHAP (or none): it was replaced here by one built-in pair for every LUN (test 653 QX-054 step 1)
+  data['chapuser'] = chapuser
+  if chaptoken != CHAP_NONE:
+   data['chappas'] = '***'
+   chapmask = chaptoken
+  datastr = data['pool']+' '+data['name']+' '+data['size']+' '+data['ipaddress']+' '+data['Subnet']+' '+data['portalport']+' '+data['initiators']+' '+chapuser+' '+chaptoken+' '+data['active']+' '+data['user']+' '+data['owner']+' '+data['user']
  elif 'CIFSdom' in data['type']:
 
   cmdline=['/TopStor/encthis.sh',data["domname"],data["dompass"]]
@@ -1925,7 +2046,7 @@ def volumecreate(data):
  with open('/TopStordata/volcreate','a') as f:
     f.write(str(data)+'\n'+'owner '+str(data['owner'])+'\n')
  print(data)
- print(datastr)
+ print(datastr.replace(chapmask, '***') if chapmask else datastr)
  print('###########################')
  if 'ISCSI' not in data['type']:
   # data efficiency of the new volume: both on unless the request says off (the scripts read these two words anywhere on the line)
@@ -2034,6 +2155,14 @@ def volumeconfig(data):
   return {'response': 'baduser'}
  getalltime()
  volume = allinfo['volumes'][data['volume']]
+ # iSCSI CHAP (test 653 QX-054 step 5/6): checked first (HTTP 400, nothing changed); the secret is in no answer
+ chapuser, chaptoken = None, None
+ if 'ISCSI' in str(data.get('type', '')):
+  chapuser, chaptoken = chap_config(data, volume)
+  chap_hide(data)
+  if chapuser is None:
+   return chap_refuse(chaptoken)
+ chap_hide(data)
  # QSD5.336: $4 of VolumeChange<type> is the quota. Not sent: the stored GB number (e.g. 1.0, no unit) as before, which the
  # scripts leave alone. Sent: checked here (HTTP 400 if bad) and passed with its unit or as none, which the scripts apply.
  quotaarg = str(volume['quota'])
@@ -2069,15 +2198,17 @@ def volumeconfig(data):
  datastr = ''
  data['owner'] = allinfo['hosts'][allinfo['pools'][volume['pool']]['host']]['name']
  if 'ISCSI' in data['type']:
-  data['chapuser']='MoatazNegm'
-  data['chappas']='MezoAdmin'
+  # the requested CHAP, or the volume's own when none is sent (it was replaced here by one built-in pair, test 653 step 5)
+  data['chapuser'] = chapuser
   if 'initiators' not in data:
    data['initiators'] = volume['initiators']
   if 'portalport' not in data:
    data['portalport'] = volume['portalport']
   for ele in data:
-   volume[ele] = data[ele] 
-  datastr = volume['pool']+' '+volume['name']+' '+str(volume['quota'])+' '+data['ipaddress']+' '+str(volume['Subnet'])+' '+data['portalport']+' '+data['initiators']+' '+data['chapuser']+' '+data['chappas']+' '+volume['statusmount']+' '+data['user']+' '+data['owner']+' '+data['user']
+   if ele not in CHAP_SECRETS:
+    volume[ele] = data[ele]
+  volume['chappas'] = chaptoken
+  datastr = volume['pool']+' '+volume['name']+' '+str(volume['quota'])+' '+data['ipaddress']+' '+str(volume['Subnet'])+' '+data['portalport']+' '+data['initiators']+' '+chapuser+' '+chaptoken+' '+volume['statusmount']+' '+data['user']+' '+data['owner']+' '+data['user']
  else:
 
   if 'groups' in data and len(data['groups']) < 1: 

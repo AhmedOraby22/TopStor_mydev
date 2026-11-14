@@ -99,6 +99,8 @@ then
   targetcli /iscsi delete $oldT
   /TopStor/shareaddr.sh del $oldipaddr ${oldipsubnet:-24}
  fi
+ # the old target keeps asking CHAP only while an ACL left on it has CHAP (QSD5.341)
+ targetcli ls /iscsi/$oldT >/dev/null 2>&1 && /pace/iscsichap.sh $oldT nochap nochap
  /TopStor/shareaddr.sh add $ipaddr $ipsubnet
 fi
 
@@ -156,6 +158,11 @@ do
  echo "$keep" | grep -qx "$p" && continue
  targetcli /iscsi/$T/tpg1/portals delete `echo $p | sed 's/:\([0-9]*\)$/ \1/'`
 done
+# 4b. CHAP (QSD5.341, test 653 QX-054 step 5): the volume's CHAP on the ACL of every requested initiator (a new chappas
+#     replaces the old one: the new secret logs in, the old one is refused), clearchap removes it, nochap leaves the ACLs as
+#     they are; the TPG asks CHAP (authentication=1) while an ACL of it has a CHAP user
+/pace/iscsichap.sh $T "$chapuser" "$chappas" $wanted || fail target_chap
+[ "$chappas" = clearchap ] && chapuser=nochap && chappas=nochap
 targetcli saveconfig
 
 # 5. check what LIO has now: the ACLs that map this LUN are exactly the requested initiators, and the portal is there

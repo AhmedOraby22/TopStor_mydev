@@ -4213,3 +4213,17 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   `VolCst01`/`VolCsu01`. Refused or failed (privilege, bad address/port/initiator, target mismatch): new `VolCfa02` (error), no
   `VolCsu01`. `/root/volchange` and `/root/addzfsvol` mask the CHAP secret. `pace/addzfsvolumeastarget.sh`: one TPG LUN per
   backstore, no ACL for `This_lun_is_not_mapped`, lowest free mapped_lun.
+
+* **QSD5.341, test 653 (QX-054) steps 1-6:** iSCSI CHAP. `volumes/create` and `volumes/config` replaced the request's `chapuser`/
+  `chappas` with one built-in pair (the same on every installation) and returned it in the answer, in volumesinfo and in
+  `info/commandlog`; `addzfsvolumeastarget.sh` set it on the TPG only (used by generated ACLs, which are off) with
+  `authentication=0`, so CHAP was never asked. Now fapi uses the requested pair: `chapuser` 1-64 of `[A-Za-z0-9._:-]`, `chappas`
+  12-16 of `[A-Za-z0-9._:@!-]` (LIO / Microsoft initiator rule), checked on the value as sent; else HTTP 400 `invalidchap`
+  ("invalid character in chapuser|chappas ...", "chappas must be 12 to 16 characters ...", "chapuser and chappas are given
+  together ...") and nothing is queued. No pair = no CHAP (`nochap`); `volumes/config chapuser=nochap` removes it; config without
+  CHAP keeps the volume's own. The secret goes on encrypted (`encthis.sh <user> -`, secret on stdin; `chapenc_<b64, / = @@sep>`),
+  is stored so in the etcd record, `/TopStordata/iscsi.<vol>` and `/<pool>/iscsi.<vol>`, and is decrypted only by the new
+  `pace/iscsichap.sh <target> <user> <token> <initiators>`, which writes user and secret with the shell's printf to the node ACL in
+  configfs (no command line, so not in `~/.targetcli/log.txt`) and sets `authentication=1` on the TPG while an ACL of it has CHAP
+  (0 when none: LUNs without CHAP and records from before stay as they were). CHAP belongs to the initiator's ACL of the portal:
+  LUNs of one address share it. Answers and `cmdaudit.log` show `chappas` as `***`; the `/root` traces mask it.
