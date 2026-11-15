@@ -753,19 +753,23 @@ def getconns(data):
  global leaderip
  if 'baduser' in data['response']:
   return {'response': 'baduser'}
- conns = get('connections/user','--prefix')
- devs = get('connections/dev','--prefix')
- zippedconns = zip(conns,devs)
+ # QSD5.344 (test 658 QX-059 step 3): every node writes the clients of its volumes (CIFS, NFS, iSCSI) to
+ # connections/<node> = {"stamp", "node", "connections": [...]} (pace/activeusers.py from zfsping, ~30 s). A node whose stamp
+ # is older than 90 s (dead node, stopped collector) is left out. Before, connections/user and connections/dev were read,
+ # which nothing wrote.
  conndict =  {}
  conndict['connections'] = []
- tconns = 0
- for conn in zippedconns:
-  volume = conn[0][0].split('/')[3]
-  subconns =  conn[0][1].split('/')
-  subdevs =  conn[1][1].split('/')
-  zippedsubconns = zip(subconns,subdevs)
-  for subcon in zippedsubconns:
-   conndict['connections'].append({"volume": volume, 'user': subcon[0], 'device':subcon[1] })
+ now = timestamp()
+ for node in get('connections/','--prefix'):
+  try:
+   nodeconns = json.loads(node[1])
+   if now - float(nodeconns['stamp']) > 90:
+    continue
+   for conn in nodeconns['connections']:
+    conn['device'] = conn.get('client','')	# the field of the old answer
+    conndict['connections'].append(conn)
+  except Exception:
+   continue
  conndict['response'] = data['response']
  return conndict 
 
