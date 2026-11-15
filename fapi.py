@@ -2396,6 +2396,10 @@ def hostconfig(data):
   logmsg.sendlog('Priv1004','error','system',data['response'])
   data['error'] = 'noprivilege'
   return data
+ # alias: letters, digits, '.' and '-' only (the node start scripts use it unquoted in shell commands; '_' is the
+ # sync-key separator); an empty alias is left to the old behaviour.  Refused before anything is stored.
+ if data.get('alias','') != '' and not re.fullmatch(r'[A-Za-z0-9.-]{1,64}', str(data['alias'])):
+  return jsonify({'response':'error','message':'invalid character in parameter: alias'}), 400
  if 'ipaddr' in data:
     isvu =  int(is_valid_ip(data['ipaddr']))+int(is_unique_ip(data['ipaddr']))
     if isvu == 0:
