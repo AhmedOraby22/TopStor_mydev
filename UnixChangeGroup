@@ -29,14 +29,39 @@ mlist_add() { echo "$1" | awk -F, -v n="$2" '{o=""; f=0; for(i=1;i<=NF;i++) if($
 # rowok <value>: a real usersigroup value (uid:gid:home/size/members/...), never the _1 etcdget.py prints for a missing key
 rowok() { echo "$1" | grep -q '^[0-9][0-9]*:[0-9][0-9]*:[^/]*/[^/]*/[^/]*/'; }
 missing=''
+# Notifications (logmsg.py/logqueue.py) run in the background, in the order they are sent (see UnixAddUser / UnixAddGroup);
+# a nested call from UnixAddGroup joins its chain through TS_NOTIFYPIDFILE. No output may reach the consumer's pipe.
+notifyfile=${TS_NOTIFYPIDFILE:-/tmp/topstornotify.$$}
+notify() {
+	local prev=''
+	[ -s "$notifyfile" ] && read -r prev < "$notifyfile"
+	( n=0; while [ -n "$prev" ] && [ $n -lt 100 ] && kill -0 "$prev" 2>/dev/null; do sleep 0.1; n=$((n+1)); done
+	  docker exec etcdclient "$@" ) </dev/null >/dev/null 2>&1 &
+	echo $! > "$notifyfile"
+}
+[ -z "$TS_NOTIFYPIDFILE" ] && trap 'rm -f "$notifyfile"' EXIT
+# a sync copy (pull) is not a task of its own: no task-queue (logqueue) rows for it
+ispull=0
+echo "s$pullsync $7" | grep -q pull && ispull=1
+queue() { [ $ispull -eq 1 ] || notify /TopStor/logqueue.py `basename "$0"` "$@"; }
 privilege="Box_Users";
 contrun=`./privthis.sh $privilege $userreq`;
 if [[ $contrun == 'true' ]]
 then
 
-	myhost=`docker exec etcdclient /TopStor/etcdgetlocal.py clusternode`
-	myhostip=`docker exec etcdclient /TopStor/etcdgetlocal.py clusternodeip`
-	leader=`docker exec etcdclient /TopStor/etcdgetlocal.py leader`
+	# UnixAddGroup hands its values over (TS_*); otherwise clusternode, clusternodeip and leader in ONE docker exec (was three)
+	myhost=$TS_MYHOST; myhostip=$TS_MYHOSTIP; leader=$TS_LEADER
+	if [ -z "$myhost" -o -z "$myhostip" -o -z "$leader" ]
+	then
+		hostinfo=`docker exec -w /TopStor etcdclient /usr/bin/python3 -c 'from etcdgetlocal import etcdget; [etcdget(k) for k in ("clusternode","clusternodeip","leader")]'`
+		myhost=`echo "$hostinfo" | sed -n 1p`; myhostip=`echo "$hostinfo" | sed -n 2p`; leader=`echo "$hostinfo" | sed -n 3p`
+	fi
+	if [ -z "$myhost" -o -z "$myhostip" -o -z "$leader" ]
+	then
+		myhost=`docker exec etcdclient /TopStor/etcdgetlocal.py clusternode`
+		myhostip=`docker exec etcdclient /TopStor/etcdgetlocal.py clusternodeip`
+		leader=`docker exec etcdclient /TopStor/etcdgetlocal.py leader`
+	fi
 	echo $leader | grep $myhost
 	if [ $? -eq 0 ];
 	then
@@ -50,11 +75,11 @@ then
  then
 	exit
  fi
- docker exec etcdclient /TopStor/logqueue.py `basename "$0"` running $userreq 
+ queue running $userreq
  echo s$pullsync | grep pull
  if [ $? -ne 0 ]
  then
- 	docker exec etcdclient /TopStor/logmsg.py Unst1025 info $userreq $groupname
+ 	notify /TopStor/logmsg.py Unst1025 info $userreq $groupname
  fi
  if [ "$groupusers" != 'NoUser' ];
  then
@@ -153,7 +178,7 @@ then
  echo s$pullsync | grep pull
  if [ $? -ne 0 ]
  then
- 	docker exec etcdclient /TopStor/logmsg.py Unsu1025 info $userreq $groupname
+ 	notify /TopStor/logmsg.py Unsu1025 info $userreq $groupname
  fi
  echo ${ischange}$leader | grep change$myhost
  if [ $? -eq 0 ];
@@ -168,7 +193,7 @@ then
  ln -f /etc/passwd  /opt/passwds/passwd
  ln -f /etc/group  /opt/passwds/group
  ln -f /etc/shadow  /opt/passwds/shadow
- docker exec etcdclient /TopStor/logqueue.py `basename "$0"` finish $userreq 
+ queue finish $userreq
  # a follower that misses a member user keeps the request (checksyncs tries it again; the user's own sync comes first)
  if [ "$etcd" != "$leaderip" ] && [ -n "$missing" ];
  then

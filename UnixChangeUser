@@ -53,11 +53,14 @@ notify() {
 	echo $! > "$notifyfile"
 }
 [ -z "$TS_NOTIFYPIDFILE" ] && trap 'rm -f "$notifyfile"' EXIT
+# a sync copy (pull) is not a task of its own: no task-queue (logqueue) rows for it (test 671: two background python+pika
+# runs per copy on the slow follower)
+queue() { echo "s$pullsync" | grep -q pull || notify /TopStor/logqueue.py `basename "$0"` "$@"; }
 privilege="Box_Users";
 contrun=`./privthis.sh $privilege $userreq`;
 if [[ $contrun == 'true' ]];
 then
-	notify /TopStor/logqueue.py `basename "$0"` running $userreq 
+	queue running $userreq 
 	# UnixAddUser hands its values over (TS_*); otherwise clusternode, clusternodeip and leader in ONE docker exec (was three)
 	myhost=$TS_MYHOST; myhostip=$TS_MYHOSTIP; leader=$TS_LEADER
 	if [ -z "$myhost" -o -z "$myhostip" -o -z "$leader" ]
@@ -84,7 +87,7 @@ then
  id $username
  if [ $? -ne 0 ];
  then
-	notify /TopStor/logqueue.py `basename "$0"` finish $userreq 
+	queue finish $userreq 
 	exit 
  fi
  if [ "$username" != 'NoUser' ];
@@ -268,7 +271,7 @@ then
 	/TopStor/etcdput.py $etcd sync/UsrChange/$params/request/$myhost UsrChange_$stamp
 	/TopStor/etcdput.py $etcd sync/UsrChange/$params/request UsrChange_$stamp
  fi
- notify /TopStor/logqueue.py `basename "$0"` finish $userreq 
+ queue finish $userreq 
  # a follower that misses a group of the leader keeps the request (checksyncs tries it again until the group's own sync made it)
  if [ $follower -eq 1 ] && [ -n "$missing" ];
  then

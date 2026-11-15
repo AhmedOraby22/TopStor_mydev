@@ -100,7 +100,9 @@ def config(leader, leaderip, myhost, *bargs):
    cmdlinep=['/TopStor/encthis.sh',arglist['username'],arglist['password']]
    encthis=subprocess.run(cmdlinep,stdout=subprocess.PIPE).stdout.decode('utf-8').split('_result')[1]
    put(leaderip, 'usershash/'+arglist['username'], encthis)
-   dels(leaderip, 'sync', 'passwd_')
+   # only THIS user's pending request (and its done marks): 'passwd_' (the value of every user's request) deleted the
+   # pending password change of every other user, so a follower that had not applied it yet never did (test 671)
+   dels(leaderip, 'sync', 'UnixChangePass_'+arglist['username']+'_')
    put(leaderip, 'sync/passwd/UnixChangePass_'+arglist['username']+'_'+arglist['user']+'/request','passwd_'+stampi)
    #put(leaderip, 'sync/passwd/UnixChangePass_'+arglist['username']+'_'+arglist['user']+'/request/'+myhost,'passwd_'+stampi)
 #   broadcast('UserPassChange','/TopStor/pump.sh','UnixChangePass',arglist['password'],arglist['username'],arglist['user'])

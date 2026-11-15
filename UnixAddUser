@@ -12,6 +12,7 @@ size=`echo $@ | awk '{print $6}'`;
 HomeAddr=`echo $@  | awk '{print $7}' `;
 HomeSubnet=`echo $@  | awk '{print $8}'`;
 pullsync=`echo $@  | awk '{print $9}'`;
+leaderhash=''
 echo $pullsync | grep pull
 if [ $? -eq 0 ]
 then
@@ -19,6 +20,9 @@ then
 	usergd=`echo $@  | awk '{print $11}'`;
 	active=`echo $@  | awk '{print $12}'`;
 	permis=`echo $@  | awk '{print $13}'`;
+	# the leader's usershash value, kept as it is: stored here unchanged (test 671: it was decrypted and encrypted again with
+	# a new random salt, so usershash/<user> differed on every node that made the user by sync)
+	leaderhash=$userpass
 	userpass=`/TopStor/decthis.sh $username $userpass | awk -F'_result' '{print $2}'`
 	userreq=`echo $@  | awk '{print $14}'`;
 else
@@ -61,6 +65,8 @@ notify() {
 	echo $! > "$notifyfile"
 }
 [ -z "$TS_NOTIFYPIDFILE" ] && trap 'rm -f "$notifyfile"' EXIT
+# a sync copy (pull) is not a task of its own: no task-queue (logqueue) rows for it
+queue() { echo "$pullsync" | grep -q pull || notify /TopStor/logqueue.py `basename "$0"` "$@"; }
 # "<host> <ip>" of the node that has pool $1 imported (the zpool lists every node puts in hosts/<node>/current, the address
 # from ready/<node> as fapi postchange takes it); nothing when no ready node has it
 poolowner() {
@@ -126,7 +132,7 @@ then
 		myhostip=`docker exec etcdclient /TopStor/etcdgetlocal.py clusternodeip`
 		leader=`docker exec etcdclient /TopStor/etcdgetlocal.py leader`
 	fi
-	notify /TopStor/logqueue.py `basename "$0"` running $userreq
+	queue running $userreq
 	echo $leader | grep $myhost
 	if [ $? -ne 0 ];
 	then
@@ -165,7 +171,12 @@ then
  fi
  userdel -f  $username
  #pas=`echo $userpass | openssl enc -e -base64 -aes-256-ctr -nopad -nosalt -k '#skMe22'$username`
- pas=`/TopStor/encthis.sh $username $userpass | awk -F'_result' '{print $2}'` 
+ if [ -n "$leaderhash" ]
+ then
+	pas=$leaderhash
+ else
+	pas=`/TopStor/encthis.sh $username $userpass | awk -F'_result' '{print $2}'`
+ fi
  homebase='-b /NoHome -M'
  groupdel $username
  echo $homePool | grep 'NoHome'
@@ -291,6 +302,11 @@ then
   echo $etcd 2222222222222222222222222222222222222222222222222222222222222222 
   # the host values and the notification chain are handed to the nested call (it read them again: 3 docker exec)
    TS_MYHOST=$myhost TS_MYHOSTIP=$myhostip TS_LEADER=$leader TS_NOTIFYPIDFILE=$notifyfile /TopStor/UnixChangeUser $leaderip $username $usergroups $userreq create $pullsync
+  chrc=$?
+  # a sync copy: the nested call applied the leader's groups of the user as they are now, so checksyncs marks this user's
+  # pending UsrChange requests of the same pass done without running UnixChangeUser again -- unless a group was missing
+  # here (exit 3), then the UsrChange runs (and is kept) as before
+  echo $pullsync | grep -q pull && { if [ $chrc -eq 3 ]; then touch /tmp/usrchangemissing.$username; else rm -f /tmp/usrchangemissing.$username; fi; }
   echo $etcd 2222222222222222222222222222222222222222222222222222222222222222 
   echo s$pullsync | grep pull
   if [ $? -ne 0 ]
@@ -339,7 +355,7 @@ then
 	fi
  fi
  echo hi3
- notify /TopStor/logqueue.py `basename "$0"` finish $userreq 
+ queue finish $userreq
  # 1: the user is not in passwd (the sync copy then keeps its request for the next pass)
  exit $addrc
 fi
