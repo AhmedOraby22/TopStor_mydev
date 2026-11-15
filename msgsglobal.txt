@@ -397,6 +397,7 @@ Snap1043:1: : from :: Deleting period : ........
 Snap1044:2: : from :: Problem occurred while deleting period :
 Snap1045:2: : from :: Success deleting period :
 Snap1046:2: : from :: Failed to find a host for the snapshot
+Snap1047:2: : from :: Snapshot : not created, the name already exists on volume :
 Repli1001:2: : from :: Problem occurred while receiving the snapshot : from ::
 Repli1002:2: : from :: Success in receiving the snapshot : from ::
 Repli1003:1: : from :: Sending Replication : to partner :

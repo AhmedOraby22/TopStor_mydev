@@ -1865,6 +1865,18 @@ def volumesnapshotscreate(data):
  getalltime()
  ownerip = allinfo['hosts'][data['owner']]['ipaddress']
  data['leaderip'] = leaderip
+ # QSD5.345 (test 660 QX-061 step 5): a Once snapshot is stored as <name>.<epoch>, so a repeated name on the same volume
+ # made a second snapshot; refuse it here (nothing queued). The same name on another volume is allowed.
+ if data['snapsel'] == 'Once':
+  for snap in allinfo['snapshots'].values():
+   if snap.get('fullname','').split('@')[0] != data['pool']+'/'+data['volume']:
+    continue
+   base = snap.get('name','')
+   if '.' in base and base.rsplit('.',1)[1].isdigit():
+    base = base.rsplit('.',1)[0]
+   if base == data.get('name'):
+    return jsonify({'response': 'error', 'error': 'snapexists',
+                    'message': 'Snapshot name already exists on volume '+data['volume']+': '+data['name']}), 400
  switch = { 'Once':['snapsel','leaderip', 'name','pool','volume'], 'Minutely':['snapsel', 'leaderip', 'pool', 'volume', 'every', 'keep'],
 	'Hourly':['snapsel', 'leaderip', 'pool', 'volume', 'sminute', 'every', 'keep'], 
 	'Weekly':['snapsel', 'leaderip', 'pool', 'volume', 'stime', 'every', 'keep'] }
