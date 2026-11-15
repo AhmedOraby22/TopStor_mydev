@@ -2385,6 +2385,34 @@ def changepass(data):
 
 
 
+def alias_in_use(alias, me):
+ # True when alias equals (case-insensitive) the host name or the alias of a node other than 'me'.
+ # Names come from the local etcd: ready/<host>, ActivePartners/<host> and alias/<host> (so a node that is down
+ # but keeps an alias still counts).
+ new = alias.strip().lower()
+ me = me.strip().lower()
+ if new == '':
+  return False
+ def isplaceholder(v):
+  v = str(v).strip()
+  return v in ('', '-1') or re.fullmatch(r'_\d+', v) is not None
+ for prefix in ('ready/', 'ActivePartners/'):
+  for kv in get(prefix, '--prefix'):
+   if not isinstance(kv, tuple) or not str(kv[0]).startswith(prefix):
+    continue
+   host = str(kv[0])[len(prefix):].strip().lower()
+   if host != '' and host != me and host == new:
+    return True
+ for kv in get('alias/', '--prefix'):
+  if not isinstance(kv, tuple) or not str(kv[0]).startswith('alias/'):
+   continue
+  host = str(kv[0])[len('alias/'):].strip().lower()
+  if host == me or isplaceholder(kv[1]):
+   continue
+  if str(kv[1]).strip().lower() == new:
+   return True
+ return False
+
 @app.route('/api/v1/hosts/config', methods=['GET','POST'])
 @login_required
 @audit_command
@@ -2400,6 +2428,10 @@ def hostconfig(data):
  # sync-key separator); an empty alias is left to the old behaviour.  Refused before anything is stored.
  if data.get('alias','') != '' and not re.fullmatch(r'[A-Za-z0-9.-]{1,64}', str(data['alias'])):
   return jsonify({'response':'error','message':'invalid character in parameter: alias'}), 400
+ # alias: not the host name or alias of ANOTHER node (case-insensitive; '', '-1' and the '_N' placeholders mean
+ # "no alias").  The node's own name / current alias and an empty alias stay allowed.  Refused before anything is stored.
+ if data.get('alias','') != '' and alias_in_use(str(data['alias']), str(data.get('name',''))):
+  return jsonify({'response':'error','message':'alias already in use: '+str(data['alias'])}), 400
  if 'ipaddr' in data:
     isvu =  int(is_valid_ip(data['ipaddr']))+int(is_unique_ip(data['ipaddr']))
     if isvu == 0:
