@@ -287,7 +287,8 @@ APIKEY_NEVER = ('/api/v1/users/uploadUsers', '/api/v1/groups/groupchange', '/api
 APIKEY_READ = ('/api/v1/volumes/connections', '/api/v1/software/versions', '/api/v1/hosts/allinfo', '/api/v1/pools/dgsinfo',
                '/api/v1/volumes/stats', '/api/v1/volumes/volumelist', '/api/v1/tenants/tenantinfo', '/api/v1/volumes/poolsinfo',
                '/api/v1/volumes/snapshots/snapshotsinfo', '/api/v1/volumes/CIFS/volumesinfo', '/api/v1/volumes/ISCSI/volumesinfo',
-               '/api/v1/volumes/NFS/volumesinfo', '/api/v1/volumes/HOME/volumesinfo', '/api/v1/volumes/volumesinfo',
+               '/api/v1/volumes/NFS/volumesinfo', '/api/v1/volumes/HOME/volumesinfo', '/api/v1/volumes/S3/volumesinfo',
+               '/api/v1/volumes/volumesinfo',
                '/api/v1/pools/poolsinfo', '/api/v1/info/onedaylog', '/api/v1/info/logs', '/api/v1/info/commandlog',
                '/api/v1/info/cversion', '/api/v1/info/notification', '/api/v1/info/summary', '/api/v1/volumes/grouplist',
                '/api/v1/groups/grouplist', '/api/v1/users/userauths', '/api/v1/partners/partnerlist',
@@ -1647,6 +1648,17 @@ def volumeshomeinfo(data):
  volumes = volumesinfo('HOME') 
  return jsonify({'allvolumes':volumes})
 
+# S3 buckets: there is no S3 backend, so the list is empty (no volume has prot S3); the route answered 404 and the
+# S3 Buckets page showed a console error every 10 s (test 657 QX-058 step 1)
+@app.route('/api/v1/volumes/S3/volumesinfo', methods=['GET','POST'])
+@login_required
+@audit_command
+def volumess3info(data):
+ if 'baduser' in data['response']:
+      return {'response': 'baduser'}
+ volumes = volumesinfo('S3') 
+ return jsonify({'allvolumes':volumes})
+
 @app.route('/api/v1/volumes/volumesinfo', methods=['GET','POST'])
 @login_required
 @audit_command
@@ -1982,6 +1994,9 @@ def chap_config(data, volume):
 
 
 
+# the volume types that have a /TopStor/VolumeCreate<type> script
+VOLCREATE_TYPES = ('CIFS', 'CIFSdom', 'HOME', 'ISCSI', 'NFS', 'NFS_non_container')
+
 @app.route('/api/v1/volumes/create', methods=['GET','POST'])
 @login_required
 @audit_command
@@ -1989,6 +2004,13 @@ def volumecreate(data):
  global allinfo, myhost
  if 'baduser' in data['response']:
   return {'response': 'baduser'}
+ # only a type with a /TopStor/VolumeCreate<type> script: S3 (no backend) and unknown types were queued as a command
+ # that does not exist and answered 200 as accepted; now HTTP 400, nothing read, created or queued (test 657 QX-058 step 4)
+ voltype = str(data.get('type', ''))
+ if voltype == 'S3':
+  return jsonify({'response': 'error', 'error': 'nos3backend', 'message': 'Failed to create S3 bucket volume'}), 400
+ if voltype not in VOLCREATE_TYPES:
+  return jsonify({'response': 'error', 'error': 'badtype', 'message': 'Failed to create volume: unknown volume type '+voltype}), 400
  datastr = ''
  # the name as it was sent (login_required removes blanks, so 'q 1' would pass as 'q1'): volvalid.py, HTTP 400 and
  # nothing queued for a name the scripts cannot carry (test 647 QX-048 step 2)
