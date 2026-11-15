@@ -114,6 +114,7 @@ Unlin1025:0: : from :: File uploaded successfully! Adding users started
 Unlin1026:0: : from :: Failed uploading file
 Unlin1027:0: : from :: Finished adding users
 Unlin1028:1: : from :: User : already has a home folder in pool :
+Unlin1029:2: : from :: Home folder : not created, there is no such user
 IPaddrfa:0: : from :: Invalid IP address in the request 
 IPadduqfa:0: : from :: The IP address is already in use 
 IPnamuqfa:0: : from :: The name is already in use 

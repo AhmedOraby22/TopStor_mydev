@@ -220,6 +220,33 @@ def is_unique_name(name, vols=True):
         print("Valid Name")
         return 0 
 
+# volumes/create type=HOME: a home is named after its user, so the name must be an EXISTING user without a home (the opposite
+# of is_unique_name, which refused every home: test 655 QX-056 step 2).  Returns (error, message, pool), (None, None, None)
+# when the home may be made.  'hashome' when usersinfo/<user> names a pool (not NoHome) or a volumes/HOME*/.../<user>_<id>
+# exists (the check of VolumeCreateHOME, Unlin1028, answered here at once).
+def home_user_check(name):
+        name = str(name)
+        info = None
+        try:
+                for x in get('usersinfo/'+name, '--prefix'):
+                        if isinstance(x, (tuple, list)) and len(x) > 1 and str(x[0]) == 'usersinfo/'+name:
+                                info = str(x[1])
+                                break
+        except Exception:
+                info = None
+        if info is None:
+                return 'nouser', 'no such user: '+name, ''
+        part = info.split('/')
+        pool = part[1] if len(part) > 1 else ''
+        if pool and pool != 'NoHome':
+                return 'hashome', 'the user '+name+' already has a home folder in pool '+pool+': delete it first', pool
+        for key in _etcdkeys('volumes/HOME'):
+                if volshortname(key) == name:
+                        part = key.split('/')
+                        pool = part[3] if len(part) > 4 else ''
+                        return 'hashome', 'the user '+name+' already has a home folder in pool '+pool+': delete it first', pool
+        return None, None, None
+
 
 
 def getalltime(renew='no'):
@@ -1979,7 +2006,20 @@ def volumecreate(data):
  else:
   chap_hide(data)
  datatype = ip_context(data['type'], data.get('domname',''))
- isvu =  int(is_valid_ip(data['ipaddress']))+int(is_unique_ip(data['ipaddress'],datatype))+int(is_unique_name(data['name'], vols=False))
+ if data['type'] == 'HOME':
+  # a home is named after its user (VolumeCreateHOME takes the name as the user): it must be an existing user without a
+  # home, not a name no user has (is_unique_name refused every home, test 655 QX-056 step 2); nothing queued when refused
+  homeerr, homemsg, homepool = home_user_check(rawname)
+  if homeerr == 'hashome':
+   logmsg.sendlog('Unlin1028','warning',data.get('user','system'),vollogname(rawname),homepool or 'unknown')
+  elif homeerr:
+   logmsg.sendlog('Unlin1029','error',data.get('user','system'),vollogname(rawname))
+  if homeerr:
+   return jsonify({'response': 'error', 'error': homeerr, 'name': vollogname(rawname), 'message': homemsg}), 400
+  nameuq = 0
+ else:
+  nameuq = int(is_unique_name(data['name'], vols=False))
+ isvu =  int(is_valid_ip(data['ipaddress']))+int(is_unique_ip(data['ipaddress'],datatype))+nameuq
  if isvu == 0:
     print('ip is valid')
  else:
