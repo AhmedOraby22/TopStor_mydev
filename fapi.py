@@ -1854,6 +1854,58 @@ def getnotification(data):
 	 'host':notifbody[2], 'type':notifbody[4], 'user': notifbody[5], 'msgbody': msgbody[1:],'requests':requestdict, 'response':'Ok'}
  return jsonify(notif)
 
+# QSD5.348 (test 663 QX-064): volumes/snapshots/create had no parameter check: a missing key, an unknown snapsel or owner was a
+# KeyError (HTTP 500 "internal error"), a bad Once name or a bad every/keep went on to the scripts (which clamp 0/-1/abc to 1).
+# snapcreate_guard() checks the call against the leader's cached info (allinfo) before anything is queued; it returns the
+# refusal text or None. Only the keys of the chosen snapsel are checked; extra keys stay accepted.
+SNAPCREATE_KEYS = {'Once': ['pool', 'volume', 'name'], 'Minutely': ['pool', 'volume', 'every', 'keep'],
+                   'Hourly': ['pool', 'volume', 'sminute', 'every', 'keep'], 'Weekly': ['pool', 'volume', 'stime', 'every', 'keep']}
+SNAPCREATE_NAME = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,63}$')
+SNAPCREATE_DAYS = ('sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat')
+
+def snapcreate_guard(data, info):
+ def missing(key):
+  return str(data.get(key, '')) == ''
+ def whole(key, low, high=None):
+  value = str(data[key])
+  if not re.match(r'^[0-9]{1,9}$', value):
+   return False
+  return int(value) >= low and (high is None or int(value) <= high)
+ for key in ('snapsel', 'owner'):
+  if missing(key):
+   return 'missing parameter: '+key
+ snapsel = data['snapsel']
+ if snapsel not in SNAPCREATE_KEYS:
+  return 'invalid parameter: snapsel (Once, Minutely, Hourly, Weekly)'
+ for key in SNAPCREATE_KEYS[snapsel]:
+  if missing(key):
+   return 'missing parameter: '+key
+ if data['owner'] not in info.get('hosts', {}):
+  return 'no such node: '+data['owner']
+ if data['pool'] not in info.get('pools', {}):
+  return 'no such pool: '+data['pool']
+ volume = info.get('volumes', {}).get(data['volume'])
+ if not isinstance(volume, dict) or volume.get('pool') != data['pool']:
+  return 'no such volume: '+data['volume']
+ if snapsel == 'Once':
+  if not SNAPCREATE_NAME.match(data['name']):
+   return 'invalid character in parameter: name'
+  return None
+ if snapsel == 'Hourly' and not whole('sminute', 0, 59):
+  return 'invalid parameter: sminute'
+ if snapsel == 'Weekly':
+  stime = re.match(r'^([0-9]{1,2}):([0-9]{2})$', str(data['stime']))
+  if not stime or int(stime.group(1)) > 23 or int(stime.group(2)) > 59:
+   return 'invalid parameter: stime'
+  # for Weekly 'every' is the day of the week (the UI sends its sday, e.g. Sat): the cron day-of-week field
+  if str(data['every']).lower() not in SNAPCREATE_DAYS and not whole('every', 0, 7):
+   return 'invalid parameter: every'
+ elif not whole('every', 1):
+  return 'parameter must be a positive number: every'
+ if not whole('keep', 1):
+  return 'parameter must be a positive number: keep'
+ return None
+
 @app.route('/api/v1/volumes/snapshots/create', methods=['GET','POST'])
 @login_required
 @audit_command
@@ -1863,6 +1915,9 @@ def volumesnapshotscreate(data):
   return {'response': 'baduser'}
  datastr = ''
  getalltime()
+ refusal = snapcreate_guard(data, allinfo)
+ if refusal:
+  return jsonify({'response': 'error', 'message': refusal}), 400
  ownerip = allinfo['hosts'][data['owner']]['ipaddress']
  data['leaderip'] = leaderip
  # QSD5.345 (test 660 QX-061 step 5): a Once snapshot is stored as <name>.<epoch>, so a repeated name on the same volume
