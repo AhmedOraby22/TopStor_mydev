@@ -2471,6 +2471,9 @@ def volumesnapshotperioddel(data):
  if 'baduser' in data['response']:
   return {'response': 'baduser'}
  getalltime()
+ # QSD5.346 (test 661 QX-062 step 5): an unknown period (not in the leader's Snapperiod records) raised KeyError (HTTP 500)
+ if data.get('name','') not in allinfo['snapperiods']:
+  return jsonify({'response': 'error', 'error': 'noperiod', 'message': 'No such snapshot period: '+str(data.get('name',''))}), 400
  data['owner'] = allinfo['snapperiods'][data['name']]['host']
  ownerip = allinfo['hosts'][data['owner']]['ipaddress']
  cmndstring = "/TopStor/SnapShotPeriodDelete "+leaderip+" "+data['name']+" "+data['user']
