@@ -26,6 +26,9 @@ tmp=`mktemp`
  echo "nameserver 10.11.12.7"
  [ -n "$dns" ] && echo "nameserver $dns"
  [ -n "$search" ] && echo "search $search"
+ # a single name ('etcd') is asked as it is FIRST: without ndots:0 the resolver asked etcd.<domain> first, which waits
+ # for the cluster DNS (10 s per lookup when it is slow or unreachable, test 674 step 6: node1 could not rejoin)
+ [ -n "$search" ] && echo "options ndots:0 timeout:2 attempts:1"
 } > $tmp
 mkdir -p /root/gitrepo
 cmp -s $tmp /root/gitrepo/resolv.conf || cat $tmp > /root/gitrepo/resolv.conf
