@@ -2432,6 +2432,18 @@ def hostconfig(data):
  # "no alias").  The node's own name / current alias and an empty alias stay allowed.  Refused before anything is stored.
  if data.get('alias','') != '' and alias_in_use(str(data['alias']), str(data.get('name',''))):
   return jsonify({'response':'error','message':'alias already in use: '+str(data['alias'])}), 400
+ # ntp (test 672 step 3): an IPv4 address or an RFC 1123 host name ('ntp..bad' was written to etcd and chrony.conf);
+ # '' and '_1' (not set) stay allowed.  Refused before anything is stored.
+ for key in ('ntp', 'ntpName'):
+  val = str(data.get(key, '')).strip()
+  if val in ('', '_1'):
+   continue
+  okv = all(re.fullmatch(r'(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}', e) or
+            (len(e) <= 253 and not re.fullmatch(r'[0-9.]+', e) and
+             all(re.fullmatch(r'[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?', l) for l in e.rstrip('.').split('.')))
+            for e in re.split(r'[\s,]+', val) if e)
+  if not okv:
+   return jsonify({'response':'error','message':'invalid address or host name in parameter: '+key}), 400
  if 'ipaddr' in data:
     isvu =  int(is_valid_ip(data['ipaddr']))+int(is_unique_ip(data['ipaddr']))
     if isvu == 0:
