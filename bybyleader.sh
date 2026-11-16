@@ -22,7 +22,7 @@ nmcli conn up cmynode
 myclusterip=$leaderip
 pkill iscsiwatch
 pkill topstorrecvreply
-/TopStor/containerresolv.sh   # cluster DNS first, then 10.11.12.7 (test 673)
+/TopStor/containerresolv.sh   # containers: intdns 10.11.12.7, cluster DNS, search; intdns forwards the domain (test 673)
 rm -rf /TopStordata/etcd.sh
 cp /TopStor/discovery.sh /TopStordata/etcd.sh
 sed -i 's/SLEEP/sleep 10/g' /TopStordata/etcd.sh

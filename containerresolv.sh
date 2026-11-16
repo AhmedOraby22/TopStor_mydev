@@ -1,10 +1,14 @@
 #!/bin/sh
 # containerresolv.sh [dns] [search]   (test 673, QX-074 step 2)
-# Writes /root/gitrepo/resolv.conf, the /etc/resolv.conf of the node's containers (flask, httpd, etcd, etcdclient):
-# the cluster DNS server FIRST (the resolver stops at the first answer and the internal DNS 10.11.12.7 answers NXDOMAIN for
-# the AD domain), then the internal DNS, then the search domain.  It was always only "nameserver 10.11.12.7", so the API
-# container never used the DNS set in Running Nodes.  Without arguments the values come from the node itself: the DNS that
-# HostManualconfigDNS set (/etc/dhcp/dhclient.conf "supersede domain-name-server") and the search line of /etc/resolv.conf.
+# The node's containers (flask = the API, httpd, etcd, etcdclient, ...) share /root/gitrepo/resolv.conf as /etc/resolv.conf.
+# It was only "nameserver 10.11.12.7" (intdns, dnsmasq), so the API container never used the DNS set in Running Nodes and
+# could not resolve the AD domain.  The internal DNS must stay FIRST: every container finds its local etcd by the name
+# 'etcd' (http://etcd:2379), which only intdns knows; a cluster DNS in front of it answers NXDOMAIN and the resolver stops
+# there (QSD5.356 put it first: every local etcd read failed).  So:
+#  - intdns forwards the cluster's search domain to the cluster DNS (/etc/dnsmasq.d/cluster.conf, server=/<domain>/<dns>);
+#  - the shared resolv.conf: intdns, then the cluster DNS (used if intdns does not answer), then the search domain.
+# Without arguments the values come from the node itself: the DNS that HostManualconfigDNS set (/etc/dhcp/dhclient.conf
+# "supersede domain-name-server") and the search line of /etc/resolv.conf.
 # The file is bind-mounted into running containers: it is rewritten in place (same inode), never replaced.
 dns="$1"
 search="$2"
@@ -16,10 +20,24 @@ case "$dns" in ''|_1|10.11.12.7) dns='';; esac
 case "$search" in _1) search='';; esac
 tmp=`mktemp`
 {
- [ -n "$dns" ] && echo "nameserver $dns"
  echo "nameserver 10.11.12.7"
+ [ -n "$dns" ] && echo "nameserver $dns"
  [ -n "$search" ] && echo "search $search"
 } > $tmp
 mkdir -p /root/gitrepo
-cat $tmp > /root/gitrepo/resolv.conf
+cmp -s $tmp /root/gitrepo/resolv.conf || cat $tmp > /root/gitrepo/resolv.conf
+# intdns: forward the search domain to the cluster DNS; restarted only when that changes (dnsmasq reads it at start)
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx intdns; then
+ want=''
+ [ -n "$dns" ] && [ -n "$search" ] && want="server=/$search/$dns"
+ have=`docker exec intdns sh -c 'cat /etc/dnsmasq.d/cluster.conf 2>/dev/null'`
+ if [ "$want" != "$have" ]; then
+  if [ -n "$want" ]; then
+   docker exec intdns sh -c "echo '$want' > /etc/dnsmasq.d/cluster.conf"
+  else
+   docker exec intdns rm -f /etc/dnsmasq.d/cluster.conf
+  fi
+  docker restart -t 2 intdns >/dev/null; sleep 2
+ fi
+fi
 rm -f $tmp
