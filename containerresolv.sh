@@ -15,6 +15,9 @@ search="$2"
 if [ $# -eq 0 ]; then
  dns=`grep -h 'supersede domain-name-server' /etc/dhcp/dhclient.conf 2>/dev/null | head -1 | sed 's/.*domain-name-server *//; s/[;,].*//; s/ //g'`
  search=`grep -h '^search ' /etc/resolv.conf 2>/dev/null | head -1 | awk '{print $2}'`
+ # after a reboot NetworkManager rewrites /etc/resolv.conf without the search line (the node connections lose dns-search):
+ # HostManualconfigDNS also keeps it in dhclient.conf, which survives
+ [ -z "$search" ] && search=`grep -h 'supersede domain-search' /etc/dhcp/dhclient.conf 2>/dev/null | head -1 | sed 's/.*domain-search *//; s/[";]//g; s/ //g'`
 fi
 case "$dns" in ''|_1|10.11.12.7) dns='';; esac
 case "$search" in _1) search='';; esac
