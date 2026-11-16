@@ -458,6 +458,10 @@ docker run -itd --rm --privileged \
 	       echo initializaing volume pool leader clsuternode data
 	       myalias=`docker exec etcdclient /pace/etcdgetlocal.py $aliast/$myhost`
 	       if [ -n "$newalias" ]; then myalias=$newalias; fi
+	       # test 678: '_1' is etcdget's "not found"; it was stored as the alias of a node without one (alias/<host> = _1 on
+	       # every node and in hosts/allinfo).  No alias of its own: keep the cluster's alias for this node, else its host name
+	       case "$myalias" in ''|_1|-1) myalias=`/pace/etcdget.py $myclusterip $aliast/$myhost`;; esac
+	       case "$myalias" in ''|_1|-1) myalias=$myhost;; esac
 	       leader=`/pace/etcdget.py $myclusterip leader`
 	       docker exec etcdclient /pace/etcdputlocal.py leader $leader 
 	       docker exec etcdclient /pace/etcdputlocal.py leaderip $myclusterip
