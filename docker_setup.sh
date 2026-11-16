@@ -362,7 +362,7 @@ etcd=$mynodeip
 leader=`/pace/etcdget.py $myclusterip leader`
 fi
 
-echo nameserver 10.11.12.7 >  /root/gitrepo/resolv.conf
+/TopStor/containerresolv.sh   # cluster DNS first, then 10.11.12.7 (test 673)
 echo starting etcd 
 docker run -itd --rm --name etcd --hostname etcd -v /etc/localtime:/etc/localtime:ro -v /root/gitrepo/resolv.conf:/etc/resolv.conf -p $etcd:2379:2379 -v /TopStor/:/TopStor -v /root/etcddata:/default.etcd --net bridge0 moataznegm/quickstor:etcd
 

@@ -35,7 +35,7 @@ announce_clusterip() {
 myclusterip=$leaderip
 pkill iscsiwatch
 pkill topstorrecvreply
-echo nameserver 10.11.12.7 >  /root/gitrepo/resolv.conf
+/TopStor/containerresolv.sh   # cluster DNS first, then 10.11.12.7 (test 673)
 rm -rf /TopStordata/etcd.sh
 cp /TopStor/discovery.sh /TopStordata/etcd.sh
 sed -i 's/SLEEP/sleep 10/g' /TopStordata/etcd.sh
