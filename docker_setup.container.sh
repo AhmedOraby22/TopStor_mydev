@@ -517,7 +517,8 @@ echo $hostname > /etc/hostname
 resolve_local_host "$hostname"
 docker run --rm -d --name software --hostname software --network intdns-net --ip 10.11.12.10 -p $mynodeip:9418:9418 -v /etc/localtime:/etc/localtime:ro -v /root/gitrepo/resolv.conf:/etc/resolv.conf:ro -v /root/gitrepo/git:/srv/git -v /TopStor/abdopuppet-entrypoint.sh:/usr/local/bin/entrypoint.sh:ro topstor/abdopuppet:latest
 echo starting intdns
-docker run --rm --name intdns --hostname intdns --net intdns-net -e DNS_DOMAIN=qs.dom -e DNS_IP=10.11.12.7 -e LOG_QUERIES=true -itd --ip 10.11.12.7 -v /etc/localtime:/etc/localtime:ro -v /root/gitrepo/dnshosts:/etc/hosts moataznegm/quickstor:dns
+/TopStor/containerresolv.sh   # writes the intdns forward files before intdns starts (test 674)
+docker run --rm --name intdns --hostname intdns --net intdns-net -e DNS_DOMAIN=qs.dom -e DNS_IP=10.11.12.7 -e LOG_QUERIES=true -itd --ip 10.11.12.7 -v /etc/localtime:/etc/localtime:ro -v /root/gitrepo/dnshosts:/etc/hosts -v /root/gitrepo/intdns-cluster.conf:/etc/dnsmasq.d/cluster.conf:ro -v /root/gitrepo/intdns-cluster.servers:/etc/dnsmasq.d/cluster.servers:ro moataznegm/quickstor:dns
 
 docker run -d --name wetty   --rm -p $mynodeip:3000:3000 moataznegm/aiwork:wetty-patched --ssh-host=$mynodeip --ssh-user=root --base=/
 leaderip=$myclusterip

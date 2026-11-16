@@ -349,7 +349,8 @@ rm -rf /root/newipaddr
 rm -rf /root/newcaddr
 docker run --rm --name software  --hostname software  -v /etc/localtime:/etc/localtime:ro -v /root/gitrepo/resolv.conf:/etc/resolv.conf -p $myhostip:80:80 -v /root/gitrepo/httpd.conf:/usr/local/apache2/conf/httpd.conf -v /root/gitrepo:/usr/local/apache2/htdocs/ -itd moataznegm/quickstor:git
 echo starting intdns
-docker run --rm --name intdns --hostname intdns --net bridge0 -e DNS_DOMAIN=qs.dom -e DNS_IP=10.11.12.7 -e LOG_QUERIES=true -itd --ip 10.11.12.7 -v /etc/localtime:/etc/localtime:ro -v /root/gitrepo/dnshosts:/etc/hosts moataznegm/quickstor:dns
+/TopStor/containerresolv.sh   # writes the intdns forward files before intdns starts (test 674)
+docker run --rm --name intdns --hostname intdns --net bridge0 -e DNS_DOMAIN=qs.dom -e DNS_IP=10.11.12.7 -e LOG_QUERIES=true -itd --ip 10.11.12.7 -v /etc/localtime:/etc/localtime:ro -v /root/gitrepo/dnshosts:/etc/hosts -v /root/gitrepo/intdns-cluster.conf:/etc/dnsmasq.d/cluster.conf:ro -v /root/gitrepo/intdns-cluster.servers:/etc/dnsmasq.d/cluster.servers:ro moataznegm/quickstor:dns
 
 docker run -d --name wetty   --rm -p $mynodeip:3000:3000 wettyoss/wetty --ssh-host=$mynodeip --ssh-user=root --base=/
 leaderip=$myclusterip

@@ -32,19 +32,21 @@ tmp=`mktemp`
 } > $tmp
 mkdir -p /root/gitrepo
 cmp -s $tmp /root/gitrepo/resolv.conf || cat $tmp > /root/gitrepo/resolv.conf
-# intdns: forward the search domain to the cluster DNS; restarted only when that changes (dnsmasq reads it at start)
+# intdns: forward the search domain to the cluster DNS.  The forward lives in host files bind-mounted into intdns by the
+# start scripts: /etc/dnsmasq.d/cluster.conf = "servers-file=/etc/dnsmasq.d/cluster.servers" (read at start) and the
+# servers file itself, which dnsmasq re-reads on SIGHUP.  intdns is never restarted here: it runs with --rm, and a
+# `docker restart` of it at boot removed the container (test 674: node1 came up without intdns and could not rejoin).
+mkdir -p /root/gitrepo
+echo 'servers-file=/etc/dnsmasq.d/cluster.servers' > /root/gitrepo/intdns-cluster.conf
+want=''
+[ -n "$dns" ] && [ -n "$search" ] && want="server=/$search/$dns"
+[ -f /root/gitrepo/intdns-cluster.servers ] || touch /root/gitrepo/intdns-cluster.servers
+if [ "$want" != "`cat /root/gitrepo/intdns-cluster.servers`" ]; then
+ echo "$want" > $tmp.s; cat $tmp.s > /root/gitrepo/intdns-cluster.servers; rm -f $tmp.s
+fi
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx intdns; then
- want=''
- [ -n "$dns" ] && [ -n "$search" ] && want="server=/$search/$dns"
- have=`docker exec intdns sh -c 'cat /etc/dnsmasq.d/cluster.conf 2>/dev/null'`
- if [ "$want" != "$have" ]; then
-  if [ -n "$want" ]; then
-   docker exec intdns sh -c "echo '$want' > /etc/dnsmasq.d/cluster.conf"
-  else
-   docker exec intdns rm -f /etc/dnsmasq.d/cluster.conf
-  fi
-  docker restart -t 2 intdns >/dev/null; sleep 2
- fi
+ # an intdns started before this version has no mount: it gets the forward at its next start (no restart)
+ docker exec intdns sh -c 'test -f /etc/dnsmasq.d/cluster.servers' 2>/dev/null && docker exec intdns kill -HUP 1 2>/dev/null
  # docker gives intdns the node's search domain whenever it (re)starts the container; intdns must not use it: the start
  # scripts look up 'etcd' with `docker exec intdns nslookup etcd`, which then asked etcd.<domain> (forwarded to the cluster
  # DNS: NXDOMAIN), got no address and started the leader's etcd without one (test 673 step 4: no etcd on the new leader)
