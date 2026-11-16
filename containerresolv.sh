@@ -39,5 +39,9 @@ if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx intdns; then
   fi
   docker restart -t 2 intdns >/dev/null; sleep 2
  fi
+ # docker gives intdns the node's search domain whenever it (re)starts the container; intdns must not use it: the start
+ # scripts look up 'etcd' with `docker exec intdns nslookup etcd`, which then asked etcd.<domain> (forwarded to the cluster
+ # DNS: NXDOMAIN), got no address and started the leader's etcd without one (test 673 step 4: no etcd on the new leader)
+ docker exec intdns sh -c "grep -v '^search' /etc/resolv.conf > /tmp/r.c; cat /tmp/r.c > /etc/resolv.conf; rm -f /tmp/r.c" 2>/dev/null
 fi
 rm -f $tmp
