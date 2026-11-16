@@ -56,4 +56,8 @@ if [ -n "$error_detail" ]; then
     exit 1
 fi
 
+# test 677: a row can reach this file twice (live from the sender, and again when a node that was down catches up from the
+# log/<id> copy in etcd, pace/checksyncs.py synclogcopy; or from a second receiver): the same date, time, host, type, user and
+# code are written once
+grep -qF -- "$dt $tm $fromhost $msgtype $msguser $code " $glog 2>/dev/null && exit 0
 echo $dt $tm $fromhost $msgtype $msguser $code $dtn >> $glog

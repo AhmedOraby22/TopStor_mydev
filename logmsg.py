@@ -50,7 +50,10 @@ def sendlog(*args):
  logid=f"{myhost}_{stamp}"
 
  put(leaderip, f"sync/log/{logid}/request", f"log_{stamp}")
- put(leaderip, f"sync/log/{logid}/request/{myhost}", f"log_{stamp}")
+ # the sender's own done mark only on the leader (it writes the row live through the cluster address); a follower that is
+ # not listed ready yet (returning) did not get its own row: it copies it from log/<id> (logmsg2.sh skips a row twice)
+ if myhost == leadername:
+  put(leaderip, f"sync/log/{logid}/request/{myhost}", f"log_{stamp}")
  put(leaderip, f"log/{logid}", " ".join(z))
 
 if __name__=='__main__':
