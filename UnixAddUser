@@ -201,7 +201,10 @@ then
 	
  else
 	echo useradd \-c"TopStor"$pas $homebase \-p $userpass \-s /usr/sbin/nologin $username
- 	useradd -c"TopStor"$pas $homebase -p $userpass -s /usr/sbin/nologin $username 
+ 	# test 678: an id free in the whole cluster (etcd), not only in this node's /etc/passwd and /etc/group
+ 	nid=`/TopStor/nextclusterid.sh $etcd`
+ 	useradd -c"TopStor"$pas $homebase -u $nid -p $userpass -s /usr/sbin/nologin $username 
+ 	groupmod -g $nid $username 2>/dev/null
  fi
  echo $pullsync | grep pull
  if [ $? -ne 0 ]

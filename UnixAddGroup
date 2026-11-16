@@ -95,7 +95,10 @@ echo 2222222222222222222222222222222222222222222222
  echo s$pullsync | grep pull
  if [ $? -ne 0 ]
  then
- 	useradd -c"TopStorGroup"$pas $homebase -p $userpass -s /usr/sbin/nologin $username 
+ 	# test 678: an id free in the whole cluster (etcd), not only in this node's /etc/group
+ 	nid=`/TopStor/nextclusterid.sh $etcd`
+ 	useradd -c"TopStorGroup"$pas $homebase -u $nid -p $userpass -s /usr/sbin/nologin $username 
+ 	groupmod -g $nid $username 2>/dev/null
  else
 	useradd -c"TopStorGroup"$pas $homebase -u $userid -p $userpass -s /usr/sbin/nologin $username
 	groupmod -g $usergd $username
