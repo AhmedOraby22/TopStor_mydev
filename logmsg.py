@@ -29,9 +29,22 @@ def sendlog(*args):
  msg={'req': 'msg2', 'reply':z}
  put(leaderip, 'notification',' '.join(z))
  sendhost(leaderip, str(msg),'recvreply',myhost)
- for k in knowninfo:
-  sendhost(k[1], str(msg),'recvreply',myhost)
-  knowns.append(k[1])
+ # test 677 step 2: the row went only to the leader and the 'known/' hosts, and known/ is empty in this cluster (addknown is
+ # not run): no follower ever wrote a row, so after a take over the new leader's log had none of the rows written before.
+ # Every other ready node gets it too now (the leader once, through the cluster address above).
+ leadername = str(get(leaderip, 'leader')[0])
+ leadernodeip = ''.join(v for k, v in get(leaderip, 'ready/'+leadername, '--prefix') if k == 'ready/'+leadername) if leadername not in ('', '_1') else ''
+ targets = []
+ for k in list(knowninfo) + list(get(leaderip, 'ready', '--prefix')):
+  if not isinstance(k, (tuple, list)) or len(k) < 2:
+   continue
+  ip = str(k[1])
+  if ip in ('', '_1', leaderip, leadernodeip) or ip in targets:
+   continue
+  targets.append(ip)
+ for ip in targets:
+  sendhost(ip, str(msg),'recvreply',myhost)
+  knowns.append(ip)
 
  stamp=datetime.datetime.now().strftime("%s%f")
  logid=f"{myhost}_{stamp}"

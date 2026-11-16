@@ -34,7 +34,7 @@ announce_clusterip() {
 ( announce_clusterip; sleep 1; announce_clusterip; sleep 2; announce_clusterip; sleep 4; announce_clusterip ) >/dev/null 2>&1 </dev/null &
 myclusterip=$leaderip
 pkill iscsiwatch
-pkill topstorrecvreply
+pkill -f /TopStor/topstorrecvreply.py   # test 677: the name (16 chars) never matched the 15-char process name: a second receiver wrote every log row twice
 /TopStor/containerresolv.sh   # containers: intdns 10.11.12.7, cluster DNS, search; intdns forwards the domain (test 673)
 rm -rf /TopStordata/etcd.sh
 cp /TopStor/discovery.sh /TopStordata/etcd.sh

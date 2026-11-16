@@ -21,7 +21,7 @@ nmcli conn mod cmynode +ipv4.addresses $myclusterip
 nmcli conn up cmynode
 myclusterip=$leaderip
 pkill iscsiwatch
-pkill topstorrecvreply
+pkill -f /TopStor/topstorrecvreply.py   # test 677: the name (16 chars) never matched the 15-char process name: a second receiver wrote every log row twice
 /TopStor/containerresolv.sh   # containers: intdns 10.11.12.7, cluster DNS, search; intdns forwards the domain (test 673)
 rm -rf /TopStordata/etcd.sh
 cp /TopStor/discovery.sh /TopStordata/etcd.sh
