@@ -56,7 +56,7 @@ echo iam in >> /root/tmp2
   ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/ActPool/Del_${pool}_$guid/request/$leader actpools_$stamp 
   # test 678 step 3: the standby assignment goes FIRST (it was deleted only after the destroy): with pools/<pool> gone and
   # poolnxt/<pool> still there, the standby node imported its old leg of the pool being deleted
-  ETCDCTL_API=3 /pace/etcdput.py $leaderip pooldeleting/$pool yes
+  ETCDCTL_API=3 /pace/etcdput.py $leaderip pooldeleting/$pool `date +%s`
   ETCDCTL_API=3 /pace/etcddel.py $leaderip poolnxt/$pool
   ETCDCTL_API=3 /pace/etcddel.py $leaderip pools $pool
   ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/pools/Del_pools_${pool}/request pools_$stamp 
@@ -83,7 +83,7 @@ echo iam in >> /root/tmp2
  echo iam here2 >> /root/tmp2
  # QSD5.327 (test 634 / 630): the pool is exported for a moment below; its standby (poolnxt/<pool>) must not import it in that
  # window.  zpooltoimport.py imports no pool that has this marker; it is removed after the destroy.
- ETCDCTL_API=3 /pace/etcdput.py $leaderip pooldeleting/$pool yes
+ ETCDCTL_API=3 /pace/etcdput.py $leaderip pooldeleting/$pool `date +%s`
  /sbin/zpool export -f $pool
  sleep 1
  # the import right after the export sometimes finds no pool ("cannot import: no such pool available") while the
@@ -121,7 +121,7 @@ echo iam in >> /root/tmp2
    ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/pools/Del_pools_${pool}/request/$leader pools_$stamp
    docker exec etcdclient /TopStor/logmsg.py DGsu5 info $userreq $pool
 fi
-ETCDCTL_API=3 /pace/etcddel.py $leaderip pooldeleting/$pool
+# pooldeleting/<pool> stays (its value is the time): pace/poolguard.py keeps the loops off the deleted pool for 15 min
 /pace/etcddel.py $leaderip requests/DGdestroypool/$myhost $myhost/$userreq
 #systemctl restart zfs-zed
  docker exec etcdclient /TopStor/logqueue.py `basename "$0"` stop $userreq 
