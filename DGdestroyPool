@@ -54,6 +54,10 @@ echo iam in >> /root/tmp2
   ETCDCTL_API=3 /pace/etcddel.py $leaderip sync/ActPool/ ${pool} 
   ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/ActPool/Del_${pool}_$guid/request actpools_$stamp 
   ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/ActPool/Del_${pool}_$guid/request/$leader actpools_$stamp 
+  # test 678 step 3: the standby assignment goes FIRST (it was deleted only after the destroy): with pools/<pool> gone and
+  # poolnxt/<pool> still there, the standby node imported its old leg of the pool being deleted
+  ETCDCTL_API=3 /pace/etcdput.py $leaderip pooldeleting/$pool yes
+  ETCDCTL_API=3 /pace/etcddel.py $leaderip poolnxt/$pool
   ETCDCTL_API=3 /pace/etcddel.py $leaderip pools $pool
   ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/pools/Del_pools_${pool}/request pools_$stamp 
   ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/pools/Del_pools_${pool}/request/$leader pools_$stamp

@@ -631,6 +631,7 @@ do
 	# every node and in hosts/allinfo).  No alias of its own: keep the cluster's alias for this node, else its host name
 	case "$myalias" in ''|_1|-1) myalias=`/pace/etcdget.py $myclusterip $aliast/$myhost`;; esac
 	case "$myalias" in ''|_1|-1) myalias=$myhost;; esac
+	docker exec etcdclient /pace/etcdputlocal.py $aliast/$myhost $myalias   # its own local copy too (it kept _1)
 	leader=`/pace/etcdget.py $myclusterip leader`
 	docker exec etcdclient /pace/etcdputlocal.py leader $leader 
 	docker exec etcdclient /pace/etcdputlocal.py leaderip $myclusterip
@@ -642,6 +643,10 @@ do
 	docker exec etcdclient /pace/etcddellocal.py sync/pool Del_ 2>/dev/null
 	docker exec etcdclient /pace/etcddellocal.py sync/volume Add_ 2>/dev/null
 	docker exec etcdclient /pace/etcddellocal.py sync/volume Del_ 2>/dev/null
+	# test 678 step 2: the local pool/volume keys were just deleted, but this node's done marks of the initial sync requests
+	# (sync/<x>/initial/request/<me>) were still there from an earlier start: a returning follower got no pools/ or volumes/
+	# keys again.  Its marks go, so it copies them anew.
+	[ "$isprimary" -eq 0 ] 2>/dev/null && /pace/etcddel.py $myclusterip sync /initial/request/$myhost
 	/pace/etcdput.py $myclusterip $aliast/$myhost $myalias
 	#/TopStor/syncq.py $myclusterip $myhost 2>/root/syncqerror
 	stamp=`date +%s%N`
