@@ -2865,6 +2865,13 @@ def api_partners_freeport(data):
 def AddPartner(data):
  if 'baduser' in data['response']:
   return {'response': 'baduser'} 
+ # test 674 step 7: the pass reached PartnerAdd.py with a trailing newline (the command line is split on blanks) and became
+ # part of an etcd sync key; every key list read after it paired keys with the wrong values and checksyncs wrote marks
+ # without end.  alias / type / pass go into the command line, the 'Partner/<alias>_<type>' key and the
+ # '<ip>/<type>/<port>/<pass>' value: no blank, control character, '/', '_' or ':' in them.
+ for key, pat in (('alias', r'[A-Za-z0-9.-]{1,64}'), ('type', r'[A-Za-z]{1,32}'), ('pass', r'[^\s/_:]{1,128}')):
+  if not re.fullmatch(pat, str(data.get(key, ''))):
+   return jsonify({'response':'error','message':'invalid character in parameter: '+key}), 400
  isvu =  int(is_valid_ip(data['ip']))+int(is_unique_ip(data['ip']))
  if isvu == 0:
         print('ip is valid')
