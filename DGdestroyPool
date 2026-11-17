@@ -121,7 +121,7 @@ echo iam in >> /root/tmp2
    ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/pools/Del_pools_${pool}/request/$leader pools_$stamp
    docker exec etcdclient /TopStor/logmsg.py DGsu5 info $userreq $pool
 fi
-# pooldeleting/<pool> stays (its value is the time): pace/poolguard.py keeps the loops off the deleted pool for 15 min
+# pooldeleting/<pool> stays (its value is the time): pace/poolguard.py keeps the loops off the deleted pool for 30 days
 /pace/etcddel.py $leaderip requests/DGdestroypool/$myhost $myhost/$userreq
 #systemctl restart zfs-zed
  docker exec etcdclient /TopStor/logqueue.py `basename "$0"` stop $userreq 
