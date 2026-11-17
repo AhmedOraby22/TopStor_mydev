@@ -477,7 +477,7 @@ docker run -itd --rm --privileged \
 	       # test 678 step 2: the local pool/volume keys were just deleted, but this node's done marks of the initial sync requests
 	       # (sync/<x>/initial/request/<me>) were still there from an earlier start: a returning follower got no pools/ or volumes/
 	       # keys again.  Its marks go, so it copies them anew.
-	       [ "$isprimary" -eq 0 ] 2>/dev/null && /pace/etcddel.py $myclusterip sync /initial/request/$myhost
+	       [ "$isprimary" -eq 0 ] 2>/dev/null && { /pace/etcddel.py $myclusterip sync/pool /initial/request/$myhost; /pace/etcddel.py $myclusterip sync/volume /initial/request/$myhost; }   # only these (test 679: all of them made the first pass ~35 min)
 	       /pace/etcdput.py $myclusterip $aliast/$myhost $myalias
 #/TopStor/syncq.py $myclusterip $myhost 2>/root/syncqerror
 	       stamp=`date +%s%N`
