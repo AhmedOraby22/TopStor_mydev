@@ -19,6 +19,9 @@ setenforce 0
 #targetcli clearconfig confirm=true
 nmcli conn mod cmynode +ipv4.addresses $myclusterip 
 nmcli conn up cmynode
+# test 680: the cluster address must not come back by itself when this node boots again (NetworkManager auto-activated the
+# saved cmynode profile with .249 for ~4 s next to the new leader: 11 s without the cluster ip for the clients)
+nmcli conn mod cmynode connection.autoconnect no 2>/dev/null
 # Tell the network that the cluster ip lives here now (gratuitous ARP).  Without it a client that talked to the
 # old leader keeps the cluster ip on the dead node's MAC until its own ARP entry ages (measured: 34-47 s, although
 # this node served the UI and the API after ~19 s).  NetworkManager's own announcement is not enough: it goes out on
