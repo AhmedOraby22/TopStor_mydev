@@ -58,6 +58,13 @@ echo iam in >> /root/tmp2
   # poolnxt/<pool> still there, the standby node imported its old leg of the pool being deleted
   ETCDCTL_API=3 /pace/etcdput.py $leaderip pooldeleting/$pool `date +%s`
   ETCDCTL_API=3 /pace/etcddel.py $leaderip poolnxt/$pool
+  # test 680: both reach the followers too (the marker lived only in the leader's etcd: after a take over the new leader had
+  # neither the marker nor the poolnxt delete and imported the deleted pool's old leg)
+  dstamp=`date +%s`
+  ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/pooldeleting/Add_${pool}_$dstamp/request pooldeleting_$dstamp
+  ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/pooldeleting/Add_${pool}_$dstamp/request/$leader pooldeleting_$dstamp
+  ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/poolnxt/Del_poolnxt_${pool}/request poolnxt_$dstamp
+  ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/poolnxt/Del_poolnxt_${pool}/request/$leader poolnxt_$dstamp
   ETCDCTL_API=3 /pace/etcddel.py $leaderip pools $pool
   ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/pools/Del_pools_${pool}/request pools_$stamp 
   ETCDCTL_API=3 /pace/etcdput.py $leaderip sync/pools/Del_pools_${pool}/request/$leader pools_$stamp
