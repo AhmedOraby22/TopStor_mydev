@@ -490,6 +490,9 @@ else
 fi
 echo adding cmynode
 nmcli conn up cmynode
+# test 680: this script brings cmynode up itself; NetworkManager must not auto-activate the saved profile at the next boot
+# (an old leader re-activated the cluster ip for ~4 s next to the new leader: 11 s without .249 for the clients)
+nmcli conn mod cmynode connection.autoconnect no 2>/dev/null
 enslave_eth10_to_bond0
 # Wait for node to be up
 ping -w 3 $mynodeip
