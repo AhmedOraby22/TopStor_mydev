@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import sys, os, subprocess, datetime
+import sys, os, subprocess, datetime, fcntl, shutil
 from logqueue import queuethis, initqueue
 from etcdgetpy import etcdget as get
 from sendhost import sendhost
@@ -39,8 +39,12 @@ def create(leader, leaderip, myhost, myhostip, etcdip, pool, name, ipaddr, ipsub
     resname = vtype+'-'+ipaddr
     cmdline='rm -rf /TopStordata/tempsmb.'+ipaddr
     subprocess.run(cmdline.split(),stdout=subprocess.PIPE)  
-    cmdline='rm -rf /TopStordata/smb.'+ipaddr
-    subprocess.run(cmdline.split(),stdout=subprocess.PIPE)  
+    # test 16 step 9: smb.<ip> is no longer removed here and copied back later. In that gap a parallel start's
+    # `docker run -v /TopStordata/smb.<ip>:/etc/smb.conf` found no source and docker created a DIRECTORY there: the share
+    # section never reached the container (domain share joined but BAD_NETWORK_NAME). It is replaced atomically below;
+    # a directory left by such a run is removed.
+    if os.path.isdir('/TopStordata/smb.'+ipaddr):
+        shutil.rmtree('/TopStordata/smb.'+ipaddr, ignore_errors=True)
     mounts =''
     # right after a take over this runs while the pool is still being imported: the volume's dataset is not mounted and
     # /<pool>/smb.<volume> is not readable yet. Reading it then (the error was skipped) gave an empty smb config and a
@@ -70,8 +74,12 @@ def create(leader, leaderip, myhost, myhostip, etcdip, pool, name, ipaddr, ipsub
                     fip.write(fvol.read())
             except:
                continue 
-    cmdline = 'cp /TopStordata/tempsmb.'+ipaddr+' /TopStordata/smb.'+ipaddr
-    subprocess.run(cmdline.split(),stdout=subprocess.PIPE)  
+    if not os.path.exists('/TopStordata/tempsmb.'+ipaddr):
+        open('/TopStordata/tempsmb.'+ipaddr,'a').close()
+    shutil.copyfile('/TopStordata/tempsmb.'+ipaddr, '/TopStordata/smb.'+ipaddr+'.new')
+    if os.path.isdir('/TopStordata/smb.'+ipaddr):
+        shutil.rmtree('/TopStordata/smb.'+ipaddr, ignore_errors=True)
+    os.replace('/TopStordata/smb.'+ipaddr+'.new', '/TopStordata/smb.'+ipaddr)
     if '_' not in vtype:
         cmdline = 'cp /TopStor/VolumeCIFSupdate.sh /etc/'
         subprocess.run(cmdline.split(),stdout=subprocess.PIPE)  
@@ -153,6 +161,53 @@ def create(leader, leaderip, myhost, myhostip, etcdip, pool, name, ipaddr, ipsub
 
  
 
+def built(resname, ipaddr, name, vtype):
+    """the container of the address runs (and for a domain share is joined) with this share in its smb config"""
+    if not subprocess.run(['docker','ps','-q','-f','name=^'+resname+'$'],stdout=subprocess.PIPE).stdout.decode().strip():
+        return False
+    try:
+        with open('/TopStordata/smb.'+ipaddr) as f:
+            if '['+name+']' not in f.read():
+                return False
+    except (OSError, IsADirectoryError):
+        return False
+    if '_' in vtype:
+        return subprocess.run(['docker','exec',resname,'net','ads','testjoin'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT).returncode == 0
+    return True
+
+def lockedcreate(leader, leaderip, myhost, myhostip, etcdip, pool, name, ipaddr, ipsubnet, vtype, *args):
+    """test 16 step 9: one cifs.py per share address at a time (VolumeActivateCIFSdom and the VolumeCheck repair started two for
+    the same address within 4 s; see the smb.<ip> note in create). The lock is /tmp/shareaddr.<ip>.lock, as for NFS; a caller that
+    holds it names the address in SHAREADDR_LOCK. A run that had to wait finds the container already built with this share and
+    leaves it alone."""
+    if ipaddr in os.environ.get('SHAREADDR_LOCK','').split():
+        return create(leader, leaderip, myhost, myhostip, etcdip, pool, name, ipaddr, ipsubnet, vtype, *args)
+    try:
+        lockf = open('/tmp/shareaddr.'+ipaddr+'.lock','w')
+    except OSError:
+        return create(leader, leaderip, myhost, myhostip, etcdip, pool, name, ipaddr, ipsubnet, vtype, *args)
+    try:
+        try:
+            fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            print('address', ipaddr, 'is being built by another job: waiting')
+            for attempt in range(150):
+                sleep(2)
+                try:
+                    fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    continue
+            else:
+                print('address lock not free after 300 s, building anyway', ipaddr)
+            if built(vtype+'-'+ipaddr, ipaddr, name, vtype):
+                print('container', vtype+'-'+ipaddr, 'already built with', name, 'by the other job')
+                domstatus(ipaddr, vtype, 'joined')
+                return
+        return create(leader, leaderip, myhost, myhostip, etcdip, pool, name, ipaddr, ipsubnet, vtype, *args)
+    finally:
+        lockf.close()
+
 if __name__=='__main__':
  leader = sys.argv[1]
  leaderip = sys.argv[2]
@@ -167,7 +222,7 @@ if __name__=='__main__':
  initqueue(leaderip, myhost)
  with open('/root/cifspytmp','w') as f:
   f.write(str(sys.argv))
- res = create(leader, leaderip, myhost, myhostip, etcdip, pool, name, ipaddr, ipsubnet, vtype,*sys.argv[11:])
+ res = lockedcreate(leader, leaderip, myhost, myhostip, etcdip, pool, name, ipaddr, ipsubnet, vtype,*sys.argv[11:])
  if res and '_' in vtype:
   # a domain share that is not up and joined (the workgroup and home exit codes are unchanged)
   sys.exit(res)
