@@ -25,8 +25,10 @@ then
  mkdir -p /root/.ssh
  chmod 700 /root/.ssh
  [ -f /root/.ssh/authorized_keys ] || : > /root/.ssh/authorized_keys
- authkeys=`cat /root/.ssh/authorized_keys | grep -v $partner`
- echo $authkeys > /root/.ssh/authorized_keys
+ # keep one key per line: `echo $authkeys` (unquoted) joined every key into ONE line, so all other keys (the QC/admin
+ # key and the cluster nodes' own keys) stopped working on every node that received a partner (test 21)
+ grep -v -- "$partner" /root/.ssh/authorized_keys > /root/.ssh/authorized_keys.new
+ cat /root/.ssh/authorized_keys.new > /root/.ssh/authorized_keys; rm -f /root/.ssh/authorized_keys.new
  echo $keys | sed 's/\_spc\_/ /g' >> /root/.ssh/authorized_keys
  sshd=`cat /etc/ssh/sshd_config | grep -v "Port 22" | grep -v $port`
  echo -e "$sshd" > /etc/ssh/sshd_config
