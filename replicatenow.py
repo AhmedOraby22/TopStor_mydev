@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import sys, subprocess, logmsg
+import sys, os, subprocess, logmsg
 from allphysicalinfo import getall 
 from etcdgetpy import etcdget as get
 from etcdgetnoport import etcdget as getnoport
@@ -29,14 +29,47 @@ def oldgetnodeloc(receiver,ownerip='ssh'):
     except:
         return 'not available'
 def getnodeloc(receiver):
+    """The ssh command (ending in a space) that runs a command on a node of the partner cluster receiver.
+    The leader runs the partner's ssh tunnels and takes the command from them.  The node that owns the pool sends the
+    stream (test 22 step 16): when it is not the leader it has no tunnel, so it uses its own partner key (ownernodeloc)."""
     cmd = 'ps -ef'
-    receiverconn = subprocess.run(cmd.split(' '),stdout=subprocess.PIPE).stdout.decode().split('\n')
-    if len(receiverconn)< 10:
-        return 'not available'
-    receiverconn = [ rec for rec in receiverconn if 'ssh'+receiver in rec and 'Rremote' in rec ][0].split('ssh')[1].split('-N')[0]
+    receiverconn = subprocess.run(cmd.split(' '),stdout=subprocess.PIPE).stdout.decode().split(chr(10))
+    receiverconn = [ rec for rec in receiverconn if 'ssh'+receiver in rec and 'Rremote' in rec ]
+    if not receiverconn:
+        return ownernodeloc(receiver)
+    receiverconn = receiverconn[0].split('ssh')[1].split('-N')[0]
     host = receiverconn.split('/')[-1]
-    
     return 'ssh'+receiverconn+host
+
+def ownernodeloc(receiver):
+    """ssh command to the partner for a node without the partner tunnel (a pool owner that is not the leader).
+    The partner (Partner/<receiver> = clusterip/type/port/phrase) is reached at its first ready node with this node's own
+    key /TopStordata/<receiver>/<nodeip>; a missing or refused key is exchanged first, the same way the leader does it
+    (replisubmitkeys.submitkeys: the receiver checks the phrase).  'not available' when the partner cannot be reached."""
+    global leaderip
+    try:
+        from replisubmitkeys import submitkeys
+        partnerinfo = get(leaderip, 'Partner/'+receiver)[0]
+        if not isinstance(partnerinfo, str) or '/' not in partnerinfo:
+            return 'not available'
+        clusterip, _, repliport, phrase = partnerinfo.split('/')[:4]
+        readies = [ r for r in get(clusterip, 'ready', '--prefix') if isinstance(r, (tuple, list)) and len(r) > 1 ]
+        if not readies:
+            return 'not available'
+        nodeip = str(readies[0][1]).strip()
+        key = '/TopStordata/'+receiver+'/'+nodeip
+        nodeloc = 'ssh -oStrictHostKeyChecking=no -oBatchmode=yes -p '+repliport+' -i '+key+' '+nodeip+' '
+        opened = os.path.exists(key) and subprocess.run(nodeloc.split()+['ls'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30).returncode == 0
+        if not opened:
+            myhost = subprocess.run('docker exec etcdclient /TopStor/etcdgetlocal.py clusternode'.split(), stdout=subprocess.PIPE).stdout.decode().strip()
+            myhostip = subprocess.run('docker exec etcdclient /TopStor/etcdgetlocal.py clusternodeip'.split(), stdout=subprocess.PIPE).stdout.decode().strip()
+            _, rc = submitkeys(receiver, nodeip, 'yes', myhost, myhostip, leaderip, repliport, phrase)
+            if rc != 0:
+                return 'not available'
+        return nodeloc
+    except Exception as e:
+        print('no partner connection for', receiver, e)
+        return 'not available'
 
 def dosync(sync,  *args):
   global leaderip, leader
@@ -195,6 +228,10 @@ def repliparam(snapshot, receiver, userreq='system'):
  snapused = '0' 
  cmd = ' /TopStor/repliSelection.py '+volume+' '+volquota+' '+snapshot
  nodeloc = getnodeloc(receiver)
+ if nodeloc == 'not available':
+  logmsg.sendlog('Partnerfa02','error',userreq, receiver.split('_')[0])
+  print('(fail) no connection to the replication partner '+receiver+' result_failresult_ replicatenow_failreplicatenow_')
+  return 'closed'
  cmd = nodeloc + cmd
  finalresponse = subprocess.run(cmd.split(' '),stdout=subprocess.PIPE).stdout.decode().split('result_')[1]
  print('finalresponse',finalresponse)

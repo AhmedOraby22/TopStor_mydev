@@ -83,13 +83,14 @@ then
  /TopStor/etcdput.py $leaderip sync/running/____/request running_$stamp
  /TopStor/etcdput.py $leaderip sync/running/____/request/$leader running_$stamp
  echo ./replicatenow.py $leaderip $etcd $snapshot $receiver
- result=`./replicatenow.py $leaderip $etcd $snapshot $receiver`
- result=`echo $result | grep 'result_' | awk -F'result_' '{print $2}'`
+ raw=`./replicatenow.py $leaderip $etcd $snapshot $receiver 2>&1`
+ result=`echo $raw | grep 'result_' | awk -F'result_' '{print $2}'`
  echo .................................................................
  echo result=$result
  echo ............................................
- echo $result | grep 'fail'
- if [ $? -eq 0 ];
+ # success only when replicatenow.py says so: an empty result (it crashed before sending, test 22 step 16) is a failure
+ echo $raw | grep -q 'replicatenow_success'
+ if [ $? -ne 0 ];
  then
   #./logmsg.py Replispacefa01 error $userreq $shortreceiver $vol
   docker exec etcdclient /TopStor/logmsg.py Streamfa01 error $userreq $vol $shortreceiver
