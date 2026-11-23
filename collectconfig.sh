@@ -96,7 +96,9 @@ echo Known Replication Partners
 ./etcdget.py $etcdip repli --prefix
 echo '############################################################################################################################################'
 echo Active Tunnels
-/TopStor/activatetunnels.sh $leaderip
+# a report only lists the tunnels: running activatetunnels.sh here (test 22) started tunnel loops on a non-leader node that kept this
+# script's output pipe open, so collectconfig.py never ended and every later cluster command to that node queued behind it
+ps -eo pid,args | egrep 'Rremote|Lremote' | grep -v egrep
 echo '############################################################################################################################################'
 echo sync request status
 /pace/etcdget.py $leaderip sync --prefix | grep -v initial 

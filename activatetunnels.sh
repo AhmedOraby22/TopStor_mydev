@@ -118,8 +118,8 @@ for receiver in "${receivers_array[@]}"; do
             
             if [ -n "$Lremote_script" ] && [ -n "$Rremote_script" ]; then
                 echo "[ACTION] Launching existing tunnels: $Lremote_script and $Rremote_script"
-                $current_dir/$cluster/$Lremote_script & disown
-                $current_dir/$cluster/$Rremote_script & disown
+                $current_dir/$cluster/$Lremote_script </dev/null >/dev/null 2>&1 & disown
+                $current_dir/$cluster/$Rremote_script </dev/null >/dev/null 2>&1 & disown
                 sleep 2
                 
                 tasks=$(ps -ef | grep Rremote | grep ssh$cluster)
@@ -219,8 +219,8 @@ for receiver in "${receivers_array[@]}"; do
         
         # Launch the new tunnels
         echo "[ACTION] Launching new tunnels using $Lremote_script and $Rremote_script"
-        $current_dir/$cluster/$Lremote_script & disown
-        $current_dir/$cluster/$Rremote_script & disown
+        $current_dir/$cluster/$Lremote_script </dev/null >/dev/null 2>&1 & disown
+        $current_dir/$cluster/$Rremote_script </dev/null >/dev/null 2>&1 & disown
         sleep 2
         
         # Verify the new connection
@@ -280,8 +280,8 @@ for receiver in "${receivers_array[@]}"; do
     if [ -n "$partnerleaderip" ] && [ "$partnerleaderip" != "_1" ] && [ -f $current_dir/$cluster/Rremote_${cluster}_${partnerleaderip}_.sh ]; then
         ps -ef | grep Rremote | grep ssh$cluster | grep -q "$partnerleaderip Rremote" || {
             echo "[ACTION] starting the tunnels to the partner leader $partnerleader ($partnerleaderip)"
-            $current_dir/$cluster/Lremote_${cluster}_${partnerleaderip}_.sh & disown
-            $current_dir/$cluster/Rremote_${cluster}_${partnerleaderip}_.sh & disown
+            $current_dir/$cluster/Lremote_${cluster}_${partnerleaderip}_.sh </dev/null >/dev/null 2>&1 & disown
+            $current_dir/$cluster/Rremote_${cluster}_${partnerleaderip}_.sh </dev/null >/dev/null 2>&1 & disown
         }
     fi
     

@@ -56,18 +56,22 @@ then
 else
  	waiting=1
 fi
+# test 22: running/<receiver> is written on the leader, so it is read there too (a non-leader's local copy can be a stale
+# "running" left from an earlier send). A send that is still running is waited for (at most 300 s); a key that stays set
+# longer is stale: it is reset and this send goes on. It used to exit here silently: no stream, no success or failure message.
+waited=0
 while [ $waiting -eq 1 ];
 do
-  running=`/TopStor/etcdget.py $etcd running/$receiver`
-  echo $running | grep $receiver
+  running=`/TopStor/etcdget.py $leaderip running/$receiver`
+  echo $running | grep -w -- $receiver
   if [ $? -eq 0 ];
   then
    echo waiting the current replications to finish
-   queue=`ps -ef | grep Snapshotnow | wc -l`
-   if [ $queue -le 10 ];
+   waited=$((waited+1))
+   if [ $waited -ge 300 ];
    then
+    echo running/$receiver stayed set for 300 s: stale, reset
     /TopStor/etcdput.py $leaderip running/$receiver no
-    exit
     waiting=0
    fi
    sleep 1
@@ -98,8 +102,10 @@ then
   docker exec etcdclient /TopStor/logmsg.py Replispacesu01 info $userreq $vol $shortreceiver
  fi 
  /TopStor/etcdput.py $leaderip running/$receiver finish 
- /TopStor/etcdput.py $leaderip sync/running/____/request running_$stamp
- /TopStor/etcdput.py $leaderip sync/running/____/request/$leader running_$stamp
+ # a new stamp: with the start stamp a node that synced the "running" request never took the "finish" one
+ fstamp=`date +%s%N`
+ /TopStor/etcdput.py $leaderip sync/running/____/request running_$fstamp
+ /TopStor/etcdput.py $leaderip sync/running/____/request/$leader running_$fstamp
 fi 
 docker exec etcdclient /TopStor/logqueue.py `basename "$0"` stop system 
 #sleep 2;
