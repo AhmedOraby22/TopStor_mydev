@@ -99,7 +99,16 @@ def config(leader, leaderip, myhost, *bargs):
    logmsg.sendlog('Unlin1012','info',arglist['user'],arglist['username'])
    cmdlinep=['/TopStor/encthis.sh',arglist['username'],arglist['password']]
    encthis=subprocess.run(cmdlinep,stdout=subprocess.PIPE).stdout.decode('utf-8').split('_result')[1]
-   put(leaderip, 'usershash/'+arglist['username'], encthis)
+   # QX-010 step 4: a password change racing the delete of the same user left usershash/<user> behind ("_1"), which
+   # then blocked re-creating that user (IPnamuqfa).  The hash is written only for a user that still exists, and is
+   # taken back when the user vanished meanwhile.
+   def userexists():
+    info = get(leaderip, 'usersinfo/'+arglist['username'])
+    return bool(info) and str(info[0]) not in ('_1', '-1', '')
+   if userexists():
+    put(leaderip, 'usershash/'+arglist['username'], encthis)
+    if not userexists():
+     dels(leaderip, 'usershash/'+arglist['username'])
    # only THIS user's pending request (and its done marks): 'passwd_' (the value of every user's request) deleted the
    # pending password change of every other user, so a follower that had not applied it yet never did (test 671)
    dels(leaderip, 'sync', 'UnixChangePass_'+arglist['username']+'_')
