@@ -89,7 +89,10 @@ def fapi_unhandled(e):
  # HTTP errors (404, 405, 400 ...) keep Flask's own answer; any other exception is logged on the node (stderr of fapi,
  # with the traceback) and the client gets only a generic JSON 500, never a traceback or the debugger
  if isinstance(e, _HTTPException):
-  return e
+  # JSON, never Flask's HTML page or a route list (QX-002 step 6/7)
+  code = getattr(e, 'code', 500) or 500
+  msg = {404: 'not found', 405: 'method not allowed', 413: 'request too large'}.get(code, str(getattr(e, 'name', 'error')).lower())
+  return jsonify({'response': 'error', 'message': msg}), code
  try:
   print('fapi: unhandled exception on '+str(request.method)+' '+str(request.path), file=sys.stderr)
   traceback.print_exc()
@@ -445,12 +448,18 @@ def login_required(f):
    reply, keydata = apikey_authenticate(data)
    if reply is not None:
     return reply
+   refusal = param_guard(keydata)
+   if refusal:
+    return param_refusal(refusal)
    return f(keydata)
   data['token'] = data.get('token', '')   # no token: bad user (it was a KeyError -> HTTP 500)
   if data['token'] in loggedusers:
    if loggedusers[data['token']]['timestamp'] > timestamp():
     data['user'] = loggedusers[data['token']]['user']
     data['response'] = data['user'] 
+    refusal = param_guard(data)
+    if refusal:
+     return param_refusal(refusal)
     return f(data)
    else:
     try:
@@ -465,6 +474,58 @@ def login_required(f):
    except:
     return f({'response':'baduser'})
  return decorated_function
+
+# QX-002 (test 601) API error contract: a call that misses a required parameter, carries an over-long or badly formed one,
+# answers {"response":"error","message":...} (HTTP 200) before anything is read or queued; before, a missing key was a KeyError
+# (HTTP 500) or went on with a wrong default (volumedel without name answered "novolume").
+#   PARAM_REQUIRED: <route>: [(key, may be empty)]
+PARAM_REQUIRED = {
+ 'volumes/volumedel': [('name', False)],
+ 'pools/delpool': [('pool', False)],
+ 'volumes/snapshots/snapshotdel': [('name', False)],
+ 'groups/groupdel': [('name', False)],
+ 'hosts/getConfig': [('nodeName', False)],
+ 'pools/actionOnDisk': [('action', False)],
+ 'software/setversion': [('version', False)],
+ 'users/userdel': [('name', False)],
+ 'groups/UnixAddgroup': [('name', False), ('users', True)],
+ 'volumes/create': [('ipaddress', False)],
+}
+PARAM_MAXLEN = 255
+PARAM_LENKEYS = ('name', 'pool', 'alias', 'nodeName', 'version', 'action', 'volume', 'owner')
+PARAM_NAMECHARS = {'groups/UnixAddgroup': ('name',)}
+PARAM_NUMBERS = {'partners/AddPartner': ('port',)}
+MAX_BODY = 2*1024*1024
+
+@app.before_request
+def body_limit():
+ # every parameter travels in the URL; a body is only for the file uploads (multipart: users list, software update), which
+ # keep their own size; any other body over 2 MB is refused before it is read (QX-002 step 6)
+ if request.mimetype == 'multipart/form-data':
+  return None
+ if request.content_length is not None and request.content_length > MAX_BODY:
+  return jsonify({'response': 'error', 'message': 'request too large'}), 413
+
+def param_guard(data):
+ """None when the call may go on, else the refusal message (QX-002)."""
+ route = str(request.path).split('/api/v1/', 1)[-1].strip('/')
+ raw = request.args.to_dict()
+ for key, mayempty in PARAM_REQUIRED.get(route, []):
+  if key not in raw or (not mayempty and str(raw.get(key, '')).strip() == ''):
+   return 'missing parameter: '+key
+ for key in PARAM_LENKEYS:
+  if len(str(raw.get(key, ''))) > PARAM_MAXLEN:
+   return 'parameter too long: '+key
+ for key in PARAM_NAMECHARS.get(route, ()):
+  if key in raw and not re.match(r'^[A-Za-z0-9._-]+$', str(raw[key])):
+   return 'invalid character in parameter: '+key
+ for key in PARAM_NUMBERS.get(route, ()):
+  if key in raw and not re.match(r'^[0-9]{1,9}$', str(raw[key])):
+   return 'parameter must be a number: '+key
+ return None
+
+def param_refusal(msg):
+ return jsonify({'response': 'error', 'message': msg})
 
 COMMAND_LOG_PATH = '/TopStordata/cmdaudit.log'
 
