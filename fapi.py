@@ -565,12 +565,34 @@ def _debounce_failed(result):
   return False
  return False
 
+# secrets are never echoed back: a write answers with its parameters, and users/UnixAddUser sent the new user's password
+# back in clear text to the browser (found in the QX-002/003 re-checks)
+SECRET_KEYS = ('Password', 'password', 'pass', 'dompass', 'chappas', 'oldpass', 'newpass')
+def _scrub(result):
+ try:
+  if isinstance(result, dict):
+   for k in SECRET_KEYS:
+    if k in result and result[k] not in ('', None):
+     result[k] = '***'
+ except Exception:
+  pass
+ return result
+
+DEBOUNCE_LOG = '/TopStordata/fapi-debounce.log'
+def _debounce_note(line):
+ print(line, flush=True)
+ try:
+  with open(DEBOUNCE_LOG, 'a') as fh:
+   fh.write(time.strftime('%Y-%m-%d %H:%M:%S ')+line+chr(10))
+ except Exception:
+  pass
+
 def debounced(f, data, apikey=False):
  route = str(request.path).split('/api/v1/', 1)[-1].strip('/')
  last = route.split('/')[-1]
  nodebounce = str(request.args.get('nodebounce', '')) == '1' and (apikey or request.remote_addr in ('127.0.0.1', '::1'))
  if nodebounce or DEBOUNCE_READ.search(last):
-  return f(data)
+  return _scrub(f(data))
  args = request.args.to_dict()
  key = (str(data.get('user', '')), route, tuple(sorted((k, str(v)) for k, v in args.items() if k not in DEBOUNCE_IGNORE)))
  now = time.time()
@@ -578,14 +600,14 @@ def debounced(f, data, apikey=False):
   for k in [k for k, v in _debounce.items() if v is not None and v < now]:
    del _debounce[k]
   if key in _debounce:
-   print('Debounce: duplicate '+route+' from '+str(data.get('user', ''))+' ignored', flush=True)
+   _debounce_note('Debounce: duplicate '+route+' from '+str(data.get('user', ''))+' ignored')
    return {'response': 'duplicate', 'message': 'duplicate request ignored (debounce)'}
   _debounce[key] = None          # running
  ok = False
  try:
   result = f(data)
   ok = not _debounce_failed(result)
-  return result
+  return _scrub(result)
  finally:
   with _debounce_lock:
    if ok:
