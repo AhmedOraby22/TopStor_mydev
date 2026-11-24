@@ -451,7 +451,7 @@ def login_required(f):
    refusal = param_guard(keydata)
    if refusal:
     return param_refusal(refusal)
-   return f(keydata)
+   return debounced(f, keydata, apikey=True)
   data['token'] = data.get('token', '')   # no token: bad user (it was a KeyError -> HTTP 500)
   if data['token'] in loggedusers:
    if loggedusers[data['token']]['timestamp'] > timestamp():
@@ -460,7 +460,7 @@ def login_required(f):
     refusal = param_guard(data)
     if refusal:
      return param_refusal(refusal)
-    return f(data)
+    return debounced(f, data)
    else:
     try:
         logmsg.sendlog('Lognsa0','warning','system',loggedusers[data['token']]['user'])
@@ -534,6 +534,64 @@ def param_guard(data):
   if key in raw and not re.match(r'^[0-9]{1,9}$', str(raw[key])):
    return 'parameter must be a number: '+key
  return None
+
+# QX-003 (test 602): duplicate-request guard.  The same write (same caller, route and parameters; token and the cache buster
+# "_" ignored) while the first one runs or within DEBOUNCE_SECS after it was accepted answers
+# {"response":"duplicate","message":"duplicate request ignored (debounce)"} and is not run again: a double click or a
+# client retry queued the same change twice.  Reads are never debounced; a call that failed (error/baduser answer) is
+# forgotten at once, so a retry runs.  nodebounce=1 is honoured only for API keys and calls from the node itself.
+import threading as _threading
+DEBOUNCE_SECS = 3
+DEBOUNCE_IGNORE = ('token', '_', 'nodebounce')
+DEBOUNCE_READ = re.compile(r'(^get|^list|^fetch|info|list|stats|logs?$|log$|test$|status|^login|token$|logout$|grouplist|userlist)', re.I)
+_debounce = {}
+_debounce_lock = _threading.Lock()
+
+def _debounce_failed(result):
+ try:
+  body, code = result, 200
+  if isinstance(result, tuple):
+   body = result[0]
+   code = result[1] if len(result) > 1 and isinstance(result[1], int) else 200
+  if hasattr(body, 'get_json'):
+   code = getattr(body, 'status_code', code) or code
+   body = body.get_json(silent=True)
+  if int(code) >= 400:
+   return True
+  if isinstance(body, dict):
+   if body.get('error') or str(body.get('response', '')) in ('error', 'baduser', 'duplicate'):
+    return True
+ except Exception:
+  return False
+ return False
+
+def debounced(f, data, apikey=False):
+ route = str(request.path).split('/api/v1/', 1)[-1].strip('/')
+ last = route.split('/')[-1]
+ nodebounce = str(request.args.get('nodebounce', '')) == '1' and (apikey or request.remote_addr in ('127.0.0.1', '::1'))
+ if nodebounce or DEBOUNCE_READ.search(last):
+  return f(data)
+ args = request.args.to_dict()
+ key = (str(data.get('user', '')), route, tuple(sorted((k, str(v)) for k, v in args.items() if k not in DEBOUNCE_IGNORE)))
+ now = time.time()
+ with _debounce_lock:
+  for k in [k for k, v in _debounce.items() if v is not None and v < now]:
+   del _debounce[k]
+  if key in _debounce:
+   print('Debounce: duplicate '+route+' from '+str(data.get('user', ''))+' ignored', flush=True)
+   return {'response': 'duplicate', 'message': 'duplicate request ignored (debounce)'}
+  _debounce[key] = None          # running
+ ok = False
+ try:
+  result = f(data)
+  ok = not _debounce_failed(result)
+  return result
+ finally:
+  with _debounce_lock:
+   if ok:
+    _debounce[key] = time.time() + DEBOUNCE_SECS
+   else:
+    _debounce.pop(key, None)
 
 def param_refusal(msg):
  return jsonify({'response': 'error', 'message': msg})
