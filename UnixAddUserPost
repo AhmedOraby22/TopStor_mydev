@@ -1,0 +1,56 @@
+#!/bin/bash
+# UnixAddUserPost <leaderip> <username> <usergroups> <userreq> <pullsync> <myhost> <myhostip> <leader> <etcd> <base>
+# The second part of a new user that UnixAddUser made on the leader (no home to send to another node). Test 612 (QX-013)
+# step 1: five users added back to back must be listed within 20 s, and the node runs its commands one at a time
+# (topstorrecvreply.py). UnixAddUser now ends when the user exists (passwd, group, intsmb, usersinfo/, usershash/) and queues
+# this as a command of its own behind the commands already waiting (the other adds), so the next add does not wait for it.
+# Here, in the same order as before: the groups (UnixChangeUser ... create, which files the UsrChange sync request),
+# Unlin1022, the user sync request (sync/user, with the UnixAddUser arguments from <base>.params), the task "finish",
+# and the notifications UnixAddUser wrote to <base>.spool. A user deleted meanwhile: only "finish".
+export ETCDCTL_API=3
+cd /TopStor
+. /TopStor/etcdfast.sh
+leaderip=$1; username=$2; usergroups=$3; userreq=$4; pullsync=$5; myhost=$6; myhostip=$7; leader=$8; etcd=$9; base=${10}
+echo $leaderip $username $usergroups $userreq $pullsync $myhost $myhostip $leader $etcd $base > /root/unixadduserpost
+[ -n "$base" ] || exit 1
+# the notification spool of UnixAddUser (same functions as there)
+notifyfile=$base
+notify() { echo "$*" >> "$notifyfile.spool"; }
+notify_flush() {
+	local prev='' batch="$notifyfile.b$EPOCHREALTIME"
+	[ -s "$notifyfile.spool" ] || return 0
+	mv -f "$notifyfile.spool" "$batch" 2>/dev/null || return 0
+	[ -s "$notifyfile" ] && read -r prev < "$notifyfile"
+	( n=0; while [ -n "$prev" ] && [ $n -lt 300 ] && kill -0 "$prev" 2>/dev/null; do sleep 0.2; n=$((n+1)); done
+	  docker exec -i etcdclient /usr/bin/python3 /TopStor/notifyall.py < "$batch"; rm -f "$batch" ) </dev/null >/dev/null 2>&1 &
+	echo $! > "$notifyfile"
+}
+trap 'notify_flush; rm -f "$notifyfile" "$base.params"' EXIT
+params=''
+[ -s "$base.params" ] && params=`cat "$base.params"`
+# exact member of a usersigroup member list (field 3), as UnixChangeUser
+mlist_has() { echo ",$1," | grep -qF ",$2,"; }
+memberof() { sed -n "s/^('usersigroup\/\([^']*\)', '\(.*\)')\$/\1 \2/p" | while read -r g v; do mlist_has "`echo "$v" | cut -d/ -f3`" "$1" && echo "$g"; done; }
+info=`eget $etcd usersinfo/$username`
+if [ "$info" != '_1' ] && [ -n "$info" ] && getent passwd "$username" >/dev/null
+then
+	# a group change of this user that ran before this command (queued while the adds ran) has set the groups already
+	# (every user is then at least in Everyone): it is not undone with the groups of the add
+	if [ -z "`erows $etcd usersigroup | memberof "$username"`" ]
+	then
+		TS_MYHOST=$myhost TS_MYHOSTIP=$myhostip TS_LEADER=$leader TS_NOTIFYPIDFILE=$notifyfile /TopStor/UnixChangeUser $leaderip $username $usergroups $userreq create $pullsync
+	fi
+	notify /TopStor/logmsg.py Unlin1022 info $userreq $username
+	if [ -n "$params" ]
+	then
+		stamp=`date +%s%N`
+		params=${params}_$stamp
+		edelmatch $leaderip sync/user _${username}_
+		eput $leaderip sync/user/$params/request/$myhost user_${username}_$stamp
+		eput $leaderip sync/user/$params/request user_${username}_$stamp
+	fi
+else
+	echo user $username is gone, nothing more to do
+fi
+echo "$pullsync" | grep -q pull || notify /TopStor/logqueue.py UnixAddUser finish $userreq
+exit 0

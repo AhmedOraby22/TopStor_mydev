@@ -4,31 +4,23 @@ echo $@ | awk '{$5="***"; print}' > /root/unixadduser
 export ETCDCTL_API=3
 cd /TopStor
 . /TopStor/etcdfast.sh
-leaderip=`echo $@  | awk '{print $1}'`;
-username=`echo $@ | awk '{print $2}'`;
-homePool=`echo $@ | awk '{print $3}'`;
-usergroups=`echo $@ | awk  '{print $4}'`;
-grps=`echo $grpusers | sed 's/groups//g' | sed 's/\,/ /g'`
-userpass=`echo $@ | awk '{print $5}'`;
-size=`echo $@ | awk '{print $6}'`;
-HomeAddr=`echo $@  | awk '{print $7}' `;
-HomeSubnet=`echo $@  | awk '{print $8}'`;
-pullsync=`echo $@  | awk '{print $9}'`;
+# the fields as `echo $@ | awk '{print $N}'` gave them (blank separated), in one builtin read (was 28 forks; test 612)
+read -r leaderip username homePool usergroups userpass size HomeAddr HomeSubnet pullsync arg10 arg11 arg12 arg13 arg14 argrest <<< "$*"
 leaderhash=''
 echo $pullsync | grep pull
 if [ $? -eq 0 ]
 then
-	userid=`echo $@  | awk '{print $10}'`;
-	usergd=`echo $@  | awk '{print $11}'`;
-	active=`echo $@  | awk '{print $12}'`;
-	permis=`echo $@  | awk '{print $13}'`;
+	userid=$arg10
+	usergd=$arg11
+	active=$arg12
+	permis=$arg13
 	# the leader's usershash value, kept as it is: stored here unchanged (test 671: it was decrypted and encrypted again with
 	# a new random salt, so usershash/<user> differed on every node that made the user by sync)
 	leaderhash=$userpass
 	userpass=`/TopStor/decthis.sh $username $userpass | awk -F'_result' '{print $2}'`
-	userreq=`echo $@  | awk '{print $14}'`;
+	userreq=$arg14
 else
-	userreq=`echo $@  | awk '{print $10}'`;
+	userreq=$arg10
 fi
 # Guards for a NEW user (not for the sync copy another node makes of an accepted user): the rules of
 # uservalid.py, and never a name that is a system account here -- "userdel -f" below would delete it.
@@ -125,6 +117,7 @@ homewatch() {
 }
 homeowner=''
 addrc=0
+postlater=0
 privilege="Box_Users";
 contrun=`./privthis.sh $privilege $userreq`;
 echo contrun $contrun, $userreq
@@ -268,14 +261,13 @@ then
  fi
 
  # the leader does not run UnixAddUser_sync, which is what copies this script; the share containers read it from /hostetc
- cp -f /TopStor/smbuserfix.sh /etc/smbuserfix.sh
- currentcifs=`docker ps | awk '{print $NF}' | grep CIFS | grep -v 'CIFS_'`
  # the share containers (one docker exec each, 0.3-0.5 s) in the background, one after the other: the user's own record
  # (passwd, intsmb, usersinfo) does not wait for them (test 612 step 1); no output may reach the consumer's pipe
- echo "$currentcifs" | while read y
- do
- 	echo $y | grep -q CIFS && docker exec $y  sh /hostetc/smbuserfix.sh x $username $pas
- done </dev/null >/dev/null 2>&1 &
+ ( cp -f /TopStor/smbuserfix.sh /etc/smbuserfix.sh
+   docker ps | awk '{print $NF}' | grep CIFS | grep -v 'CIFS_' | while read y
+   do
+ 	docker exec $y  sh /hostetc/smbuserfix.sh x $username $pas
+   done ) </dev/null >/dev/null 2>&1 &
 
 # echo $pullsync | grep sync 
 # if [ $? -ne 0 ]
@@ -316,9 +308,21 @@ then
   # from here on the user is listed (users/userlist reads usersinfo/): passwd, group and intsmb are done
   eput $etcd 'usersinfo/'$username $userid':'$usergd':/'$homePool'/'$username'/'$size'/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no'
   eput $etcd 'usershash/'$username $userhash
-  notify_flush
   #/TopStor/broadcast.py UserAdd /TopStor/pump.sh UnixAddUser_sync -d$myhost $username $userhash $userid $usergd $userhome
-  echo $etcd 2222222222222222222222222222222222222222222222222222222222222222 
+  # A new user on the leader with no home to send to another node: the groups (nested UnixChangeUser), Unlin1022, the user
+  # sync request, "finish" and the notifications are done by UnixAddUserPost, queued below as a command of its own behind
+  # the commands already waiting (test 612 step 1: five adds back to back, each one waited for the whole of the one before).
+  # Its arguments are in a root-only file (the sync request carries the UnixAddUser arguments, the password among them).
+  # Not for the bulk upload (UsersMassAddition.py adds an 11th argument): its rows stay before its Unlin1027 "finished".
+  if [ "$etcd" = "$leaderip" ] && [ -z "$homeowner" ] && [ -z "${11}" ] && ! echo "$pullsync" | grep -q pull
+  then
+  	postlater=1
+  	postbase=/tmp/topstoraddpost.$username.$EPOCHREALTIME
+  	( umask 077; echo UnixAddUser $@ | sed 's/ /_/g' > "$postbase.params" )
+  	[ -s "$notifyfile.spool" ] && mv -f "$notifyfile.spool" "$postbase.spool"
+  else
+  notify_flush
+  echo $etcd 2222222222222222222222222222222222222222222222222222222222222222
   # the host values and the notification chain are handed to the nested call (it read them again: 3 docker exec)
    TS_MYHOST=$myhost TS_MYHOSTIP=$myhostip TS_LEADER=$leader TS_NOTIFYPIDFILE=$notifyfile /TopStor/UnixChangeUser $leaderip $username $usergroups $userreq create $pullsync
   chrc=$?
@@ -326,17 +330,18 @@ then
   # pending UsrChange requests of the same pass done without running UnixChangeUser again -- unless a group was missing
   # here (exit 3), then the UsrChange runs (and is kept) as before
   echo $pullsync | grep -q pull && { if [ $chrc -eq 3 ]; then touch /tmp/usrchangemissing.$username; else rm -f /tmp/usrchangemissing.$username; fi; }
-  echo $etcd 2222222222222222222222222222222222222222222222222222222222222222 
+  echo $etcd 2222222222222222222222222222222222222222222222222222222222222222
   echo s$pullsync | grep pull
   if [ $? -ne 0 ]
   then
   	notify /TopStor/logmsg.py Unlin1022 info $userreq $username
   fi
- fi 
+  fi
+ fi
  echo hi1
  echo myhost=$myhost    leader=$leader
  echo $leader | grep $myhost
- if [ $? -eq 0 ];
+ if [ $? -eq 0 ] && [ "$postlater" != 1 ];
  then
 	echo hi2
 	stamp=`date +%s%N`
@@ -374,7 +379,14 @@ then
 	fi
  fi
  echo hi3
- queue finish $userreq
+ if [ "$postlater" = 1 ]
+ then
+	# into this node's command queue (as fapi postchange does), in the background; not sent: run here (background)
+	postmsg="{'req': 'Pumpthis', 'reply': ['/TopStor/UnixAddUserPost', '$leaderip', '$username', '$usergroups', '$userreq', '$pullsync', '$myhost', '$myhostip', '$leader', '$etcd', '$postbase']}"
+	( /TopStor/sendhost.py $myhostip "$postmsg" recvreply $myhost || /TopStor/UnixAddUserPost $leaderip $username $usergroups $userreq $pullsync $myhost $myhostip $leader $etcd $postbase ) </dev/null >/dev/null 2>&1 &
+ else
+	queue finish $userreq
+ fi
  # 1: the user is not in passwd (the sync copy then keeps its request for the next pass)
  exit $addrc
 fi
