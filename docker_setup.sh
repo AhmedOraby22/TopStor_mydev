@@ -585,11 +585,17 @@ docker run -itd --rm --privileged \
 if [ $isprimary -ne 1 ];
 then
  leaderversion=`/TopStor/etcdget.py $myclusterip cversion/$leader | sed 's/-[^-]*$//'`   # '<branch>-<commit>': drop the commit only, branch names have dashes
- myversion=`/TopStor/etcdget.py $myclusterip cversion/$myhost | sed 's/-[^-]*$//'`
- echo c$leaderversion | grep c$myversion 
- if [ $? -ne 0 ];
+ # test 608 (QX-009) step 7: this node's version is its own git branch (its cversion key on the leader can be stale), and
+ # only a NEWER branch is pulled: a stale cversion key on the leader (after a take over) made a returning node pull an
+ # older branch; an empty or '_1' key is not a version at all.
+ myversion=`git -C /TopStor rev-parse --abbrev-ref HEAD 2>/dev/null`
+ newer=`printf '%s\n%s\n' "$myversion" "$leaderversion" | sort -V | tail -1`
+ echo "$leaderversion" | grep -q '^QSD' && [ "$leaderversion" != "$myversion" ] && [ "$newer" = "$leaderversion" ]
+ if [ $? -eq 0 ];
  then
 	/TopStor/myrepopull.sh $leaderversion	
+ else
+	echo "no pull: leader cversion '$leaderversion', this node '$myversion'"
  fi 
 else
 	BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)  # Get the current branch name
