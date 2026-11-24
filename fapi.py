@@ -469,7 +469,7 @@ def login_required(f):
         return f({'response':'baduser'})
   else:
    try:
-    logmsg.sendlog('Lognno0','warning','system1',data['token'])
+    logmsg.sendlog('Lognno0','warning','system1',masktoken(data['token']))
     return f({'response':'baduser'})
    except:
     return f({'response':'baduser'})
@@ -2345,12 +2345,23 @@ def volumecreate(data):
  postchange(cmndstring,data['owner'])
  return data
 
+def masktoken(token):
+ token = str(token or '')
+ return (token[:4]+'...') if len(token) > 4 else '***'
+
 def getlogin(token):
  global leaderip
  logindata = get('login',token)[0]
  if logindata == '_1':
-  logmsg.sendlog('Lognno0','warning','system2',token)
-  return {'response':'baduser'}
+  # QX-006 step 6: the API (login_required) accepts a live token from loggedusers; login/test, which every page load
+  # calls, read only etcd and called the same session "no valid session" - one warning plus toast per reload, with the
+  # session token itself in the message.  A live cached session now answers its user, and the warning never carries the
+  # token (only its first 4 characters).
+  cached = loggedusers.get(token)
+  if isinstance(cached, dict) and cached.get('timestamp', 0) > timestamp():
+   return cached.get('user', 'baduser')
+  logmsg.sendlog('Lognno0','warning','system2',masktoken(token))
+  return 'baduser'          # a plain string like every other branch (login/test answered a nested object here)
  oldtimestamp = logindata[1].split('/')[1]
  user = logindata[0].split('/')[1]
  if int(oldtimestamp) < int(timestamp()):
