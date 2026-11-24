@@ -54,11 +54,12 @@ then
   echo usename=$username
   # QX-013 step 5: the user's Samba entry goes with the user (it stayed in intsmb, so the deleted user kept an SMB account):
   # intsmb (UnixAddUser writes it with smbuser.sh) and, in the background, the share containers UnixAddUser wrote it to
-  # (smbuserfix.sh); a node without the entry answers "Failed to find entry" and nothing changes
-  docker exec intsmb /usr/bin/smbpasswd -x "$username" >/dev/null 2>&1
+  # (smbuserfix.sh). pdbedit -x, not smbpasswd -x: smbpasswd refuses once the Unix account is gone ("Failed to find a Unix
+  # account"); a container without the entry answers an error and nothing changes
+  docker exec intsmb pdbedit -x -u "$username" >/dev/null 2>&1
   docker ps | awk '{print $NF}' | grep CIFS | grep -v 'CIFS_' | while read y
   do
-  	docker exec $y smbpasswd -x "$username"
+  	docker exec $y pdbedit -x -u "$username"
   done </dev/null >/dev/null 2>&1 &
   cgrps=`groupsof $etcd $username`
   echo cgrps $cgrps
