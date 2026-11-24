@@ -34,6 +34,10 @@ then
  echo -e "$sshd" > /etc/ssh/sshd_config
  echo -e "Port $port \r"  >> /etc/ssh/sshd_config
  echo -e "Port 22 \r" >> /etc/ssh/sshd_config
+ # drop dead replication sessions (partner node powered off or partnership deleted): a stale session kept its -R port
+ # bound, so a new partnership could not forward and silently never synced (test 22 re-check)
+ grep -q "^ClientAliveInterval" /etc/ssh/sshd_config || echo "ClientAliveInterval 30" >> /etc/ssh/sshd_config
+ grep -q "^ClientAliveCountMax" /etc/ssh/sshd_config || echo "ClientAliveCountMax 3" >> /etc/ssh/sshd_config
  firewall-cmd --permanent --add-port=$port/udp
  firewall-cmd --permanent --add-port=$port/tcp
  firewall-cmd --reload
