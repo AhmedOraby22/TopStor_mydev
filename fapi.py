@@ -504,6 +504,17 @@ def body_limit():
  if request.mimetype == 'multipart/form-data':
   return None
  if request.content_length is not None and request.content_length > MAX_BODY:
+  # read (and drop) the body first: answering before it is read made the web server's proxy see a reset and send its own
+  # HTML 502 page; past 64 MB the connection is just closed
+  try:
+   left = min(request.content_length, 64*1024*1024)
+   while left > 0:
+    chunk = request.stream.read(min(65536, left))
+    if not chunk:
+     break
+    left -= len(chunk)
+  except Exception:
+   pass
   return jsonify({'response': 'error', 'message': 'request too large'}), 413
 
 def param_guard(data):
