@@ -4227,3 +4227,20 @@ Requested by the front-end developer (UI side built in QSD5.307). Released on to
   configfs (no command line, so not in `~/.targetcli/log.txt`) and sets `authentication=1` on the TPG while an ACL of it has CHAP
   (0 when none: LUNs without CHAP and records from before stay as they were). CHAP belongs to the initiator's ACL of the portal:
   LUNs of one address share it. Answers and `cmdaudit.log` show `chappas` as `***`; the `/root` traces mask it.
+
+* **QSD5.390, test 612 (QX-013) steps 1 and 5:** step 1 (5 users without a home added back to back, all listed within 20 s)
+  still failed after QSD5.316: listed at +9..+78 s on the 2-vCPU leader (load 7-10; product loopers fork ~230 processes/s).
+  Profile (traced copy of UnixAddUser run inside the command consumer): an add held the single consumer 8-11.6 s;
+  `usersinfo/` (what users/userlist reads) was written after 4.5-7.8 s. Costs: 13 python starts of etcdget/etcdput/etcddel.py
+  (0.1-0.4 s each, bare etcdctl 0.03-0.05 s), the 5 share-container `smbuserfix.sh` docker execs (1.4-2.4 s), the nested
+  `UnixChangeUser` (1-2.9 s), and 9 background `docker exec logmsg.py|logqueue.py` (python + pika each) per add that took the
+  CPU of the next add. Fix: `etcdfast.sh` (erows/eget/eput/edelmatch: the same output as the python helpers, by etcdctl);
+  notifications go to a spool and are sent in ONE docker exec of `notifyall.py` (same sendlog/queuethis, same order);
+  `UnixAddUser` on the leader (new user, no home on another node, not the bulk upload) ends once passwd, group, intsmb,
+  `usersinfo/` and `usershash/` exist and queues `UnixAddUserPost` behind the waiting commands: groups (`UnixChangeUser ...
+  create`), Unlin1022, share-container Samba (background), `sync/user`, "finish" and the notifications, in the old order
+  (a user deleted meanwhile: only "finish"; groups changed meanwhile: kept). `nextclusterid.sh <ip> -` reads the rows from
+  stdin. `/root/unixadduser` no longer keeps the password. Measured: 5 API adds listed at +4.6..+16.0 s (load 9.5-10.5),
+  one add 3.1 s; member copies done by +41 s. Step 5: `users/userdel` ends the user's sessions (`end_sessions`: loggedusers
+  tokens and `login/<user>`; old token -> baduser at once); `UnixDelUser` removes the Samba entry in intsmb and the share
+  containers with `pdbedit -x -u` (`smbpasswd -x` refuses once the Unix account is gone).
