@@ -1,7 +1,9 @@
 #!/bin/bash
-echo $@ > /root/unixadduser
+# the arguments without the password (field 5: the new user's password, or the leader's hash in a sync copy)
+echo $@ | awk '{$5="***"; print}' > /root/unixadduser
 export ETCDCTL_API=3
 cd /TopStor
+. /TopStor/etcdfast.sh
 leaderip=`echo $@  | awk '{print $1}'`;
 username=`echo $@ | awk '{print $2}'`;
 homePool=`echo $@ | awk '{print $3}'`;
@@ -53,18 +55,24 @@ then
 	fi
 fi
 # Notifications (logmsg.py/logqueue.py) cost 1.2-2.4 s each (python, pika, a new RabbitMQ connection) and nothing here reads
-# their result, so they run in the background, while this script runs in the single command consumer (topstorrecvreply.py).
-# Each one waits (at most 10 s) for the one sent before it, so they still arrive in the order they are sent; a nested
-# UnixChangeUser joins the same chain through TS_NOTIFYPIDFILE. No output may reach the consumer's pipe (it waits for EOF).
+# their result, so they are sent in the background, while this script runs in the single command consumer (topstorrecvreply.py).
+# Test 612 (QX-013) step 1: one docker exec + python per notification (9 per user add) took the CPU of the next add on a
+# 2-vCPU leader. notify now only writes the line to "$notifyfile.spool"; notify_flush sends the lines written so far in ONE
+# docker exec of notifyall.py (same logmsg.sendlog / logqueue.queuethis, same order), in the background, after the batch sent
+# before it (at most 60 s wait). A nested UnixChangeUser writes to the same spool (TS_NOTIFYPIDFILE); the top script flushes
+# at its flush points and on exit. No output may reach the consumer's pipe (it waits for EOF).
 notifyfile=${TS_NOTIFYPIDFILE:-/tmp/topstornotify.$$}
-notify() {
-	local prev=''
+notify() { echo "$*" >> "$notifyfile.spool"; }
+notify_flush() {
+	local prev='' batch="$notifyfile.b$EPOCHREALTIME"
+	[ -s "$notifyfile.spool" ] || return 0
+	mv -f "$notifyfile.spool" "$batch" 2>/dev/null || return 0
 	[ -s "$notifyfile" ] && read -r prev < "$notifyfile"
-	( n=0; while [ -n "$prev" ] && [ $n -lt 100 ] && kill -0 "$prev" 2>/dev/null; do sleep 0.1; n=$((n+1)); done
-	  docker exec etcdclient "$@" ) </dev/null >/dev/null 2>&1 &
+	( n=0; while [ -n "$prev" ] && [ $n -lt 300 ] && kill -0 "$prev" 2>/dev/null; do sleep 0.2; n=$((n+1)); done
+	  docker exec -i etcdclient /usr/bin/python3 /TopStor/notifyall.py < "$batch"; rm -f "$batch" ) </dev/null >/dev/null 2>&1 &
 	echo $! > "$notifyfile"
 }
-[ -z "$TS_NOTIFYPIDFILE" ] && trap 'rm -f "$notifyfile"' EXIT
+[ -z "$TS_NOTIFYPIDFILE" ] && trap 'notify_flush; rm -f "$notifyfile"' EXIT
 # a sync copy (pull) is not a task of its own: no task-queue (logqueue) rows for it
 queue() { echo "$pullsync" | grep -q pull || notify /TopStor/logqueue.py `basename "$0"` "$@"; }
 # "<host> <ip>" of the node that has pool $1 imported (the zpool lists every node puts in hosts/<node>/current, the address
@@ -123,8 +131,9 @@ echo contrun $contrun, $userreq
 if [[ $contrun == 'true' ]]
 then
 
-	# clusternode, clusternodeip and leader in ONE docker exec and one python (was three of each); same etcdgetlocal.etcdget
-	hostinfo=`docker exec -w /TopStor etcdclient /usr/bin/python3 -c 'from etcdgetlocal import etcdget; [etcdget(k) for k in ("clusternode","clusternodeip","leader")]'`
+	# clusternode, clusternodeip and leader in ONE docker exec (was three), read from the node's own etcd as etcdgetlocal.py
+	# does, by etcdctl (no python start); one line each, an empty line for a missing key (then the old calls below)
+	hostinfo=`docker exec etcdclient sh -c 'for k in clusternode clusternodeip leader; do echo "$(ETCDCTL_API=3 etcdctl --endpoints=http://etcd:2379 get $k --print-value-only)"; done'`
 	{ read -r myhost; read -r myhostip; read -r leader; } <<< "$hostinfo"
 	if [ -z "$myhost" -o -z "$myhostip" -o -z "$leader" ]
 	then
@@ -144,19 +153,22 @@ then
 		then
  
  			# a volume key ends in /<name>_<id> (`grep -w` never matched: `_` is a word character); a home (volumes/HOME*) is the user's own and goes with the user
- 			/pace/etcdget.py $etcd volumes --prefix | grep -v "^('volumes/HOME" | grep "/${username}\(_[0-9][0-9]*\)\{0,1\}',"
+			# (etcd rows by etcdctl, the same lines as etcdget.py --prefix; the refusal goes through the spool, after "running")
+ 			erows $etcd volumes | grep -v "^('volumes/HOME" | grep "/${username}\(_[0-9][0-9]*\)\{0,1\}',"
 	 		if [ $? -eq 0 ];
  			then
- 				docker exec etcdclient /TopStor/logmsg.py Unlin1021uv warning $userreq $username
-  				docker exec etcdclient /TopStor/logqueue.py `basename "$0"` finish $userreq 
+ 				notify /TopStor/logmsg.py Unlin1021uv warning $userreq $username
+  				queue finish $userreq
   				exit
  			fi
-		
- 			./etcdget.py $etcd user --prefix | grep -w $username 
+
+			# the user rows are kept: nextclusterid.sh takes the cluster's ids from them (no second read)
+			userrows=`erows $etcd user`
+ 			echo "$userrows" | grep -w $username
  			if [ $? -eq 0 ];
  			then
-  				docker exec etcdclient /TopStor/logmsg.py Unlin1021uu warning $userreq $username
-  				docker exec etcdclient /TopStor/logqueue.py `basename "$0"` finish $userreq 
+  				notify /TopStor/logmsg.py Unlin1021uu warning $userreq $username
+  				queue finish $userreq
   				exit
  			fi
 		fi
@@ -202,7 +214,12 @@ then
  else
 	echo useradd \-c"TopStor"$pas $homebase \-p $userpass \-s /usr/sbin/nologin $username
  	# test 678: an id free in the whole cluster (etcd), not only in this node's /etc/passwd and /etc/group
- 	nid=`/TopStor/nextclusterid.sh $etcd`
+ 	if [ -n "$userrows" ]
+ 	then
+ 		nid=`echo "$userrows" | /TopStor/nextclusterid.sh $etcd -`
+ 	else
+ 		nid=`/TopStor/nextclusterid.sh $etcd`
+ 	fi
  	useradd -c"TopStor"$pas $homebase -u $nid -p $userpass -s /usr/sbin/nologin $username 
  	groupmod -g $nid $username 2>/dev/null
  fi
@@ -221,6 +238,7 @@ then
 		if [ $? -eq 0 ]
 		then
   			echo hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
+  			notify_flush
   			echo /TopStor/VolumeCreateHOME $leaderip $homePool $username $size $username $HomeAddr $HomeSubnet active $userreq $myhost $userreq
   			/TopStor/VolumeCreateHOME $leaderip $homePool $username $size $username $HomeAddr $HomeSubnet active $userreq $myhost $userreq
 			homerc=$?
@@ -252,16 +270,12 @@ then
  # the leader does not run UnixAddUser_sync, which is what copies this script; the share containers read it from /hostetc
  cp -f /TopStor/smbuserfix.sh /etc/smbuserfix.sh
  currentcifs=`docker ps | awk '{print $NF}' | grep CIFS | grep -v 'CIFS_'`
+ # the share containers (one docker exec each, 0.3-0.5 s) in the background, one after the other: the user's own record
+ # (passwd, intsmb, usersinfo) does not wait for them (test 612 step 1); no output may reach the consumer's pipe
  echo "$currentcifs" | while read y
  do
- 	echo $y | grep CIFS
- 	if [ $? -eq 0 ]
- 	then
-       		echo dock=$y
-       		echo docker exec $y  sh /hostetc/smbuserfix.sh x $username $pas 
-       		docker exec $y  sh /hostetc/smbuserfix.sh x $username $pas
- 	fi	
- done
+ 	echo $y | grep -q CIFS && docker exec $y  sh /hostetc/smbuserfix.sh x $username $pas
+ done </dev/null >/dev/null 2>&1 &
 
 # echo $pullsync | grep sync 
 # if [ $? -ne 0 ]
@@ -299,8 +313,10 @@ then
   userhash=$pas
   usercreated='yes'
   
-  /TopStor/etcdput.py $etcd 'usersinfo/'$username $userid':'$usergd':/'$homePool'/'$username'/'$size'/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no'
-  /TopStor/etcdput.py $etcd 'usershash/'$username $userhash
+  # from here on the user is listed (users/userlist reads usersinfo/): passwd, group and intsmb are done
+  eput $etcd 'usersinfo/'$username $userid':'$usergd':/'$homePool'/'$username'/'$size'/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no/no'
+  eput $etcd 'usershash/'$username $userhash
+  notify_flush
   #/TopStor/broadcast.py UserAdd /TopStor/pump.sh UnixAddUser_sync -d$myhost $username $userhash $userid $usergd $userhome
   echo $etcd 2222222222222222222222222222222222222222222222222222222222222222 
   # the host values and the notification chain are handed to the nested call (it read them again: 3 docker exec)
@@ -326,9 +342,9 @@ then
 	stamp=`date +%s%N`
 	myscript=`basename "$0"`
 	params=`echo $myscript $@ $stamp | sed 's\ \\_\g'`
-	/pace/etcddel.py $leaderip sync/user _${username}_
-	/pace/etcdput.py $leaderip sync/user/$params/request/$myhost user_${username}_$stamp
-	/pace/etcdput.py $leaderip sync/user/$params/request user_${username}_$stamp
+	edelmatch $leaderip sync/user _${username}_
+	eput $leaderip sync/user/$params/request/$myhost user_${username}_$stamp
+	eput $leaderip sync/user/$params/request user_${username}_$stamp
 	# the UsrChange request of this user (its groups) is filed by the UnixChangeUser call above, with the arguments of UnixChangeUser;
 	# the copy that used to be filed here carried the arguments of UnixAddUser ($@), so followers ran UnixChangeUser with
 	# 'NoHome' as the groups and 'groups...' as the requester

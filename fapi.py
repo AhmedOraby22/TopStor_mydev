@@ -2923,6 +2923,25 @@ def partnerdel(data):
 
 
 
+def end_sessions(name):
+ # every live session of user <name>: its tokens in loggedusers (login_required accepts them) and its etcd login key
+ # login/<name> (getlogin() would otherwise take a token back into loggedusers); the next call answers 'baduser'
+ global loggedusers
+ name = str(name or '')
+ if not name:
+  return 0
+ ended = 0
+ for token, sess in list(loggedusers.items()):
+  if isinstance(sess, dict) and str(sess.get('user', '')) == name:
+   loggedusers.pop(token, None)
+   ended += 1
+ try:
+  subprocess.run(['etcdctl', '--endpoints=http://'+leaderip+':2379', 'del', 'login/'+name], stdout=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL, timeout=10, env=dict(os.environ, ETCDCTL_API='3'))
+ except Exception as e:
+  print('end_sessions: login/'+name+' not removed:', e, file=sys.stderr)
+ return ended
+
 @app.route('/api/v1/users/userdel', methods=['GET','POST'])
 @login_required
 @audit_command
@@ -2933,6 +2952,9 @@ def userdel(data):
  if data['tenant'] == 'Cluster':
     cmndstring = '/TopStor/UnixDelUser '+leaderip+' '+data.get('name')+' '+data['user']
     postchange(cmndstring)
+    # QX-013 step 5: the deleted user's sessions end with the delete (a token from before kept working until it expired)
+    if data.get('name') not in ('admin', 'Everyone', 'NoUser') and has_privilege('Box_Users', data['user']):
+     end_sessions(data.get('name'))
     # the home folder of the user goes with the user (its dataset is <user>_<id>, protocol HOME)
     if data.get('name') not in ('admin', 'Everyone', 'NoUser'):
      getalltime()
