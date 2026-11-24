@@ -261,9 +261,13 @@ then
  fi
 
  # the leader does not run UnixAddUser_sync, which is what copies this script; the share containers read it from /hostetc
+ # A new user on the leader with no home to send to another node and not from the bulk upload: the second part runs as
+ # UnixAddUserPost, queued at the end (see below), the share containers too.
+ canpost=0
+ [ "$etcd" = "$leaderip" ] && [ -z "$homeowner" ] && [ -z "${11}" ] && ! echo "$pullsync" | grep -q pull && canpost=1
  # the share containers (one docker exec each, 0.3-0.5 s) in the background, one after the other: the user's own record
  # (passwd, intsmb, usersinfo) does not wait for them (test 612 step 1); no output may reach the consumer's pipe
- ( cp -f /TopStor/smbuserfix.sh /etc/smbuserfix.sh
+ [ $canpost -eq 1 ] || ( cp -f /TopStor/smbuserfix.sh /etc/smbuserfix.sh
    docker ps | awk '{print $NF}' | grep CIFS | grep -v 'CIFS_' | while read y
    do
  	docker exec $y  sh /hostetc/smbuserfix.sh x $username $pas
@@ -314,7 +318,7 @@ then
   # the commands already waiting (test 612 step 1: five adds back to back, each one waited for the whole of the one before).
   # Its arguments are in a root-only file (the sync request carries the UnixAddUser arguments, the password among them).
   # Not for the bulk upload (UsersMassAddition.py adds an 11th argument): its rows stay before its Unlin1027 "finished".
-  if [ "$etcd" = "$leaderip" ] && [ -z "$homeowner" ] && [ -z "${11}" ] && ! echo "$pullsync" | grep -q pull
+  if [ $canpost -eq 1 ]
   then
   	postlater=1
   	postbase=/tmp/topstoraddpost.$username.$EPOCHREALTIME

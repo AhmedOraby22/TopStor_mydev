@@ -5,7 +5,7 @@
 # (topstorrecvreply.py). UnixAddUser now ends when the user exists (passwd, group, intsmb, usersinfo/, usershash/) and queues
 # this as a command of its own behind the commands already waiting (the other adds), so the next add does not wait for it.
 # Here, in the same order as before: the groups (UnixChangeUser ... create, which files the UsrChange sync request),
-# Unlin1022, the user sync request (sync/user, with the UnixAddUser arguments from <base>.params), the task "finish",
+# Unlin1022, the share containers' Samba entries (background), the user sync request (sync/user, with the UnixAddUser arguments from <base>.params), the task "finish",
 # and the notifications UnixAddUser wrote to <base>.spool. A user deleted meanwhile: only "finish".
 export ETCDCTL_API=3
 cd /TopStor
@@ -41,6 +41,17 @@ then
 		TS_MYHOST=$myhost TS_MYHOSTIP=$myhostip TS_LEADER=$leader TS_NOTIFYPIDFILE=$notifyfile /TopStor/UnixChangeUser $leaderip $username $usergroups $userreq create $pullsync
 	fi
 	notify /TopStor/logmsg.py Unlin1022 info $userreq $username
+	# the user's Samba entry in the share containers, as UnixAddUser did it (smbuserfix.sh with the usershash value), in the
+	# background, one container after the other; no output may reach the consumer's pipe
+	pas=`eget $etcd usershash/$username`
+	if [ -n "$pas" ] && [ "$pas" != '_1' ]
+	then
+		( cp -f /TopStor/smbuserfix.sh /etc/smbuserfix.sh
+		  docker ps | awk '{print $NF}' | grep CIFS | grep -v 'CIFS_' | while read y
+		  do
+			docker exec $y  sh /hostetc/smbuserfix.sh x $username $pas
+		  done ) </dev/null >/dev/null 2>&1 &
+	fi
 	if [ -n "$params" ]
 	then
 		stamp=`date +%s%N`
