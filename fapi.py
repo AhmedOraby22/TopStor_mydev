@@ -446,6 +446,7 @@ def login_required(f):
    if reply is not None:
     return reply
    return f(keydata)
+  data['token'] = data.get('token', '')   # no token: bad user (it was a KeyError -> HTTP 500)
   if data['token'] in loggedusers:
    if loggedusers[data['token']]['timestamp'] > timestamp():
     data['user'] = loggedusers[data['token']]['user']
@@ -2221,6 +2222,8 @@ def getlogin(token):
 def logout():
  global leaderip
  data = request.args.to_dict()
+ if not data.get('token'):
+  return { 'response': 'baduser' }
  dels('login',data['token'])
  loggedusers.pop(data['token'], None)
  return data
@@ -2228,6 +2231,9 @@ def logout():
 @app.route('/api/v1/login/test', methods=['GET','POST'])
 def testlogin():
  data = request.args.to_dict()
+ # QX-001 step 11 (test 600): no token is a bad user, not a KeyError turned into HTTP 500 by the global handler
+ if not data.get('token'):
+  return { 'response': 'baduser' }
  loginresponse = getlogin(data['token'])
  return { 'response': loginresponse }
 
@@ -2237,7 +2243,10 @@ def login():
  print('#######################')
  print(data)
  print('#######################')
- userdict, token = setlogin(leaderip,myhost, data['user'],data['pass'])
+ # a request without user or pass is a failed login (it was a KeyError -> HTTP 500, QX-001)
+ if not data.get('user'):
+  return jsonify({'token':'baduser'})
+ userdict, token = setlogin(leaderip,myhost, data['user'],data.get('pass',''))
  if token != 0:
   loggedusers[token] = userdict.copy()
   logmsg.sendlog('Lognsu0','info','system',data['user'])
