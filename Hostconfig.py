@@ -102,13 +102,18 @@ def config(leader, leaderip, myhost, *bargs):
    # QX-010 step 4: a password change racing the delete of the same user left usershash/<user> behind ("_1"), which
    # then blocked re-creating that user (IPnamuqfa).  The hash is written only for a user that still exists, and is
    # taken back when the user vanished meanwhile.
-   def userexists():
-    info = get(leaderip, 'usersinfo/'+arglist['username'])
-    return bool(info) and str(info[0]) not in ('_1', '-1', '')
-   if userexists():
+   # The built-in admin has no usersinfo/ key (QX-014 step 7: its password change was silently dropped), so a user
+   # also counts while it still has its usershash/ key; a user deleted meanwhile has neither.
+   def haskey(key):
+    v = get(leaderip, key+'/'+arglist['username'])
+    return bool(v) and str(v[0]) not in ('_1', '-1', '')
+   hasinfo = haskey('usersinfo')
+   if hasinfo or haskey('usershash'):
     put(leaderip, 'usershash/'+arglist['username'], encthis)
-    if not userexists():
+    if hasinfo and not haskey('usersinfo'):
      dels(leaderip, 'usershash/'+arglist['username'])
+   else:
+    logmsg.sendlog('Unlinfa12','error',arglist['user'],arglist['username'])
    # only THIS user's pending request (and its done marks): 'passwd_' (the value of every user's request) deleted the
    # pending password change of every other user, so a follower that had not applied it yet never did (test 671)
    dels(leaderip, 'sync', 'UnixChangePass_'+arglist['username']+'_')
